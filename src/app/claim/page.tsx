@@ -1,21 +1,25 @@
 'use client'
 
 import { useState, useEffect, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Loader2 } from 'lucide-react'
+import { Loader2, CheckCircle } from 'lucide-react'
 import { useWallet } from '@/contexts/WalletContext'
+import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
 import { checkIfGhost, fetchVaultData } from '@/lib/stellar'
 
 function ClaimPageContent() {
   const searchParams = useSearchParams()
   const vaultId = searchParams.get('vault')
+  const router = useRouter()
   const { isConnected, publicKey, connectWallet, setIsGhost, isGhost } = useWallet()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [vaultData, setVaultData] = useState<{ amount: string; claimant: string } | null>(null)
   const [isAuthorized, setIsAuthorized] = useState(true)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
     async function loadVaultData() {
@@ -49,6 +53,42 @@ function ClaimPageContent() {
     }
   }, [isConnected, publicKey, vaultData, setIsGhost])
 
+  const handleClaim = async () => {
+    if (!vaultId || !publicKey || !vaultData) return
+    setIsProcessing(true)
+    setError(null)
+    try {
+      const buildRes = await fetch('/api/claim/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiverPublicKey: publicKey,
+          vaultId,
+          amount: vaultData.amount,
+        }),
+      })
+      const { xdr } = await buildRes.json()
+
+      const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey,
+      })
+
+      await fetch('/api/claim/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signedXdr: signedTxXdr }),
+      })
+
+      setSuccess(true)
+    } catch (err) {
+      console.error(err)
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
@@ -76,6 +116,26 @@ function ClaimPageContent() {
         <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-red-950/30 p-8 text-center">
           <h1 className="text-2xl font-bold text-red-400">Unauthorized.</h1>
           <p className="mt-2 text-zinc-400">This secure link is assigned to a different wallet.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (success) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 backdrop-blur-sm text-center">
+          <CheckCircle className="mx-auto h-16 w-16 text-green-400" />
+          <h1 className="mt-4 text-2xl font-bold text-zinc-50">Transaction Settled.</h1>
+          <p className="mt-2 text-zinc-400">
+            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} USDC and 1.51 XLM.
+          </p>
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="mt-8 w-full rounded-2xl bg-blue-500 px-8 py-4 text-lg font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-400 transition-colors"
+          >
+            Go to Dashboard
+          </button>
         </div>
       </div>
     )
@@ -110,10 +170,25 @@ function ClaimPageContent() {
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className="w-full rounded-2xl bg-green-500 px-8 py-4 text-lg font-semibold text-white shadow-lg shadow-green-500/30 hover:bg-green-400 transition-colors"
+                onClick={handleClaim}
+                disabled={isProcessing}
+                className="w-full rounded-2xl bg-green-500 px-8 py-4 text-lg font-semibold text-white shadow-lg shadow-green-500/30 hover:bg-green-400 disabled:opacity-70 transition-colors"
               >
-                {isGhost ? 'Claim USDC ($0.50 Network Activation Fee)' : 'Claim USDC (Gas-Free)'}
+                {isProcessing ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Processing Secure Claim...
+                  </div>
+                ) : isGhost ? (
+                  'Claim USDC ($0.50 Network Activation Fee)'
+                ) : (
+                  'Claim USDC (Gas-Free)'
+                )}
               </motion.button>
+            )}
+
+            {error && (
+              <p className="text-sm text-red-400">{error}</p>
             )}
 
             {isConnected && isGhost && (
