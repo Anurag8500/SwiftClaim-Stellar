@@ -74,15 +74,17 @@ export default function GenerateLink() {
       ) as StellarSdk.Transaction
 
       const response = await submitToNetwork(signedTx)
+
+      // Synchronously parse the XDR receipt to extract the Vault ID instantly
       const txResult = StellarSdk.xdr.TransactionResult.fromXDR(
         response.result_xdr,
         'base64'
       )
-
-      // Navigate the XDR tree: Result -> Op Results -> Op Type (tr) -> Success Arm -> Balance ID
       const results = txResult.result().results()
       const opResult = (results[0].tr() as any).createClaimableBalanceResult()
-      const vaultId = (opResult.success() as any).balanceId().toHex()
+
+      // Use .toHex() to extract the correct Claimable Balance ID format
+      const vaultId = opResult.balanceId().toHex()
 
       setLink(`${window.location.origin}/claim?vault=${vaultId}`)
     } catch (err) {

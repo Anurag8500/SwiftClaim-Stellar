@@ -128,7 +128,7 @@ function ClaimPageContent() {
           <CheckCircle className="mx-auto h-16 w-16 text-green-400" />
           <h1 className="mt-4 text-2xl font-bold text-zinc-50">Transaction Settled.</h1>
           <p className="mt-2 text-zinc-400">
-            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} USDC and 1.51 XLM.
+            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} USDC .
           </p>
           <button
             onClick={() => router.push('/dashboard')}
