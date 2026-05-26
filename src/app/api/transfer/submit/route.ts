@@ -8,6 +8,7 @@ export async function POST(request: Request) {
     const { signedXdr } = await request.json()
 
     const treasuryKeypair = getTreasuryKeypair()
+    const treasuryPublicKey = treasuryKeypair.publicKey()
 
     const innerTx = StellarSdk.TransactionBuilder.fromXDR(
       signedXdr,
@@ -15,9 +16,9 @@ export async function POST(request: Request) {
     ) as StellarSdk.Transaction
 
     const feeBumpTx = (StellarSdk.TransactionBuilder as any).buildFeeBumpTransaction(
-      treasuryKeypair,
-      innerTx,
+      treasuryPublicKey,
       StellarSdk.BASE_FEE,
+      innerTx,
       StellarSdk.Networks.TESTNET
     )
 

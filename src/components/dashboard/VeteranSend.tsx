@@ -6,7 +6,7 @@ import { Loader2, CheckCircle } from 'lucide-react'
 import { useWallet } from '@/contexts/WalletContext'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
 
-export default function VeteranSend() {
+export default function DirectSend() {
   const [receiverPublicKey, setReceiverPublicKey] = useState('')
   const [amount, setAmount] = useState('50')
   const [isProcessing, setIsProcessing] = useState(false)
