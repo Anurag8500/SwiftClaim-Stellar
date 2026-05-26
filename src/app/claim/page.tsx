@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 import { Loader2, CheckCircle } from 'lucide-react'
 import { useWallet } from '@/contexts/WalletContext'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
-import { checkIfGhost, fetchVaultData } from '@/lib/stellar'
+import { checkIfGhost, fetchVaultData, ASSETS } from '@/lib/stellar'
 
 function ClaimPageContent() {
   const searchParams = useSearchParams()
@@ -20,6 +20,10 @@ function ClaimPageContent() {
   const [isAuthorized, setIsAuthorized] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [targetAsset, setTargetAsset] = useState('USDC')
+  const [assetCode, setAssetCode] = useState('USDC')
+
+  const targetAssetData = ASSETS[targetAsset as keyof typeof ASSETS]
 
   useEffect(() => {
     async function loadVaultData() {
@@ -65,6 +69,8 @@ function ClaimPageContent() {
           receiverPublicKey: publicKey,
           vaultId,
           amount: vaultData.amount,
+          assetCode,
+          targetAsset: targetAssetData.contractId,
         }),
       })
       const { xdr } = await buildRes.json()
@@ -128,7 +134,7 @@ function ClaimPageContent() {
           <CheckCircle className="mx-auto h-16 w-16 text-green-400" />
           <h1 className="mt-4 text-2xl font-bold text-zinc-50">Transaction Settled.</h1>
           <p className="mt-2 text-zinc-400">
-            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} USDC .
+            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} {targetAssetData.code} .
           </p>
           <button
             onClick={() => router.push('/dashboard')}
@@ -151,10 +157,27 @@ function ClaimPageContent() {
             animate={{ opacity: 1, y: 0 }}
             className="text-3xl font-bold"
           >
-            <span className="text-green-400">${parseFloat(vaultData.amount).toFixed(2)} USDC</span> waiting.
+            <span className="text-green-400">${parseFloat(vaultData.amount).toFixed(2)} {assetCode}</span> waiting.
           </motion.h1>
 
           <p className="mt-2 text-zinc-400">Securely locked in SwiftClaim Vault.</p>
+
+          <div className="mt-6">
+            <label className="mb-2 block text-sm font-medium text-zinc-300">
+              Desired Output Asset
+            </label>
+            <select
+              value={targetAsset}
+              onChange={(e) => setTargetAsset(e.target.value)}
+              className="w-full rounded-2xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-lg text-zinc-50 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {Object.entries(ASSETS).map(([key, asset]) => (
+                <option key={key} value={key}>
+                  {asset.code}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="mt-8 space-y-4">
             {!isConnected ? (
@@ -180,9 +203,9 @@ function ClaimPageContent() {
                     Processing Secure Claim...
                   </div>
                 ) : isGhost ? (
-                  'Claim USDC ($0.50 Network Activation Fee)'
+                  `Claim ${targetAssetData.code} ($0.50 Network Activation Fee)`
                 ) : (
-                  'Claim USDC (Gas-Free)'
+                  `Claim ${targetAssetData.code} (Gas-Free)`
                 )}
               </motion.button>
             )}
