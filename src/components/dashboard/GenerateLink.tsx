@@ -48,51 +48,34 @@ export default function GenerateLink({ receiverPublicKey }: GenerateLinkProps) {
         return
       }
 
-      const sourceAccount = await server.loadAccount(userPublicKey)
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase: StellarSdk.Networks.TESTNET,
+      // Phase A: Build transaction
+      const buildRes = await fetch('/api/lock/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderPublicKey: userPublicKey,
+          receiverPublicKey,
+          assetAddress: selectedAssetData.contractId,
+          amount,
+        }),
       })
-        .addOperation(
-          StellarSdk.Operation.createClaimableBalance({
-            asset: new StellarSdk.Asset(selectedAssetData.code, selectedAssetData.contractId),
-            amount: amount.toString(),
-            claimants: [
-              new StellarSdk.Claimant(
-                receiverPublicKey,
-                StellarSdk.Claimant.predicateUnconditional()
-              ),
-            ],
-          })
-        )
-        .setTimeout(StellarSdk.TimeoutInfinite)
-        .build()
+      const { xdr } = await buildRes.json()
 
-      const { signedTxXdr } = await StellarWalletsKit.signTransaction(
-        transaction.toXDR(),
-        {
-          networkPassphrase: Networks.TESTNET,
-          address: userPublicKey,
-        }
-      )
+      // Phase B: Sign with Freighter
+      const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
+        networkPassphrase: Networks.TESTNET,
+        address: userPublicKey,
+      })
 
-      const signedTx = StellarSdk.TransactionBuilder.fromXDR(
-        signedTxXdr,
-        StellarSdk.Networks.TESTNET
-      ) as StellarSdk.Transaction
+      // Phase C: Submit to backend
+      await fetch('/api/lock/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signedXdr: signedTxXdr }),
+      })
 
-      const response = await submitToNetwork(signedTx)
-
-      const txResult = StellarSdk.xdr.TransactionResult.fromXDR(
-        response.result_xdr,
-        'base64'
-      )
-      const results = txResult.result().results()
-      const opResult = (results[0].tr() as any).createClaimableBalanceResult()
-
-      const vaultId = opResult.balanceId().toHex()
-
-      setLink(`${window.location.origin}/claim?vault=${vaultId}`)
+      // Link generation: vaultId is receiverPublicKey
+      setLink(`${window.location.origin}/claim?vault=${receiverPublicKey}`)
     } catch (err) {
       console.error(err)
       setError(

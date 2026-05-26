@@ -24,10 +24,33 @@ export async function checkIfGhost(publicKey: string): Promise<boolean> {
 export const TESTNET_USDC = StellarSdk.Asset.native()
 
 export async function fetchVaultData(vaultId: string) {
-  const claimableBalance = await server.claimableBalances().claimableBalance(vaultId).call()
-  const amount = claimableBalance.amount
-  const claimant = claimableBalance.claimants[0].destination
-  return { amount, claimant }
+  const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
+    new StellarSdk.xdr.LedgerKeyContractData({
+      contract: new StellarSdk.Address(SWIFTVAULT_CONTRACT_ID).toScAddress(),
+      key: StellarSdk.nativeToScVal(new StellarSdk.Address(vaultId)),
+      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+    })
+  )
+
+  const entries = await sorobanServer.getLedgerEntries(ledgerKey)
+
+  if (entries.entries.length === 0) {
+    throw new Error('Vault not found')
+  }
+
+  const record = StellarSdk.scValToNative(entries.entries[0].val.contractData().val()) as any
+  const amount = record.amount.toString()
+  const assetAddress = record.asset.toString()
+  let assetCode = 'USDC'
+  
+  for (const [key, asset] of Object.entries(ASSETS)) {
+    if (asset.contractId === assetAddress) {
+      assetCode = asset.code
+      break
+    }
+  }
+
+  return { amount, claimant: vaultId, assetCode, assetAddress }
 }
 
 export const SWIFTVAULT_CONTRACT_ID = 'CC4KLUJ2OW3FGHEY52NXP7IKXPGN6HFM3BXPUAKDJ2FFGGCUOVCKBMMP'

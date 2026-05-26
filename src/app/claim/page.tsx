@@ -16,12 +16,11 @@ function ClaimPageContent() {
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [vaultData, setVaultData] = useState<{ amount: string; claimant: string } | null>(null)
+  const [vaultData, setVaultData] = useState<{ amount: string; claimant: string; assetCode: string; assetAddress: string } | null>(null)
   const [isAuthorized, setIsAuthorized] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
   const [success, setSuccess] = useState(false)
   const [targetAsset, setTargetAsset] = useState('USDC')
-  const [assetCode, setAssetCode] = useState('USDC')
 
   const targetAssetData = ASSETS[targetAsset as keyof typeof ASSETS]
 
@@ -67,10 +66,14 @@ function ClaimPageContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           receiverPublicKey: publicKey,
-          vaultId,
-          amount: vaultData.amount,
-          assetCode,
+          routerAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+          usdcAddress: ASSETS.USDC.contractId,
           targetAsset: targetAssetData.contractId,
+          minPrincipalOut: '0',
+          minFeeOut: '0',
+          deadline: Math.floor(Date.now() / 1000) + 3600,
+          amount: vaultData.amount,
+          assetCode: vaultData.assetCode,
         }),
       })
       const { xdr } = await buildRes.json()
@@ -157,7 +160,7 @@ function ClaimPageContent() {
             animate={{ opacity: 1, y: 0 }}
             className="text-3xl font-bold"
           >
-            <span className="text-green-400">${parseFloat(vaultData.amount).toFixed(2)} {assetCode}</span> waiting.
+            <span className="text-green-400">${parseFloat(vaultData.amount).toFixed(2)} {vaultData.assetCode}</span> waiting.
           </motion.h1>
 
           <p className="mt-2 text-zinc-400">Securely locked in SwiftClaim Vault.</p>
