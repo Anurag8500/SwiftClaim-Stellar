@@ -47,7 +47,31 @@ export async function POST(request: Request) {
       fee: StellarSdk.BASE_FEE,
       networkPassphrase: StellarSdk.Networks.TESTNET,
     })
+      .addOperation(
+        StellarSdk.Operation.beginSponsoringFutureReserves({
+          sponsoredId: receiverPublicKey,
+        })
+      )
+      .addOperation(
+        StellarSdk.Operation.createAccount({
+          destination: receiverPublicKey,
+          startingBalance: '0',
+        })
+      )
+      .addOperation(
+        StellarSdk.Operation.changeTrust({
+          asset: new StellarSdk.Address(targetAsset).toString() === 'native' 
+            ? StellarSdk.Asset.native() 
+            : new StellarSdk.Asset(assetCode, targetAsset),
+          source: receiverPublicKey,
+        })
+      )
       .addOperation(invokeOp)
+      .addOperation(
+        StellarSdk.Operation.endSponsoringFutureReserves({
+          source: receiverPublicKey,
+        })
+      )
       .setTimeout(300)
       .build()
 
