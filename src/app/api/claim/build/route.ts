@@ -2,12 +2,27 @@ import { NextResponse } from 'next/server'
 import * as StellarSdk from '@stellar/stellar-sdk'
 import { server, TESTNET_USDC } from '@/lib/stellar'
 import { getTreasuryKeypair } from '@/lib/treasury'
+import { getAttestedPriceData, signPriceData } from '@/lib/oracle'
 
 export async function POST(request: Request) {
   try {
-    const { receiverPublicKey, vaultId, amount } = await request.json()
+    const { receiverPublicKey, vaultId, amount, assetCode = 'USDC' } = await request.json()
 
-    const fee = Math.min(Math.max(parseFloat(amount) * 0.01, 0.50), 5.00).toFixed(2)
+    const priceData = await getAttestedPriceData(assetCode)
+    const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
+
+    if (amount * livePrice < 1.00) {
+      return NextResponse.json(
+        { error: 'Transfer amount must be at least $1.00 USD equivalent.' },
+        { status: 400 }
+      )
+    }
+
+    const signatureData = signPriceData(priceData.assetCode, priceData.scaledPrice, priceData.expirationTimestamp)
+    const attestationPayload = {
+      ...priceData,
+      ...signatureData
+    }
 
     const treasuryKeypair = getTreasuryKeypair()
     const treasuryPublicKey = treasuryKeypair.publicKey()
@@ -45,20 +60,12 @@ export async function POST(request: Request) {
           source: receiverPublicKey,
         })
       )
-      .addOperation(
-        StellarSdk.Operation.payment({
-          destination: treasuryPublicKey,
-          asset: TESTNET_USDC,
-          amount: fee,
-          source: receiverPublicKey,
-        })
-      )
       .setTimeout(StellarSdk.TimeoutInfinite)
       .build()
 
     transaction.sign(treasuryKeypair)
 
-    return NextResponse.json({ xdr: transaction.toXDR() })
+    return NextResponse.json({ xdr: transaction.toXDR(), attestationPayload })
   } catch (error) {
     console.error(error)
     return NextResponse.json(

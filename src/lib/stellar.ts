@@ -29,7 +29,7 @@ export async function fetchVaultData(vaultId: string) {
   return { amount, claimant }
 }
 
-export const SWIFTVAULT_CONTRACT_ID = 'CC4KLUJ2OW3FGHEY52NXP7IKXPGN6HFM3BXPUAKDJ2FFGGCUOVCKBMMP'
+export const SWIFTVAULT_CONTRACT_ID = 'CC2ULNZM3ERJ4TOZ44ELJO3D6G47ARKOCZD6A7GVREAKCRAD4R4YHF6R'
 
 export const ASSETS = {
   USDC: {

@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env, Vec,
+    contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, String, Vec,
 };
 
 // External Interfaces: SoroswapRouter
@@ -25,12 +25,94 @@ pub struct EscrowRecord {
     pub amount: i128,
 }
 
+// Data Structures: OracleAttestation
+#[contracttype]
+#[derive(Clone)]
+pub struct OracleAttestation {
+    pub asset_code: Bytes,
+    pub scaled_price: i128,
+    pub expiration_timestamp: u64,
+    pub signature: BytesN<64>,
+}
+
+// Storage Keys
+const TREASURY_KEY: &str = "TREASURY";
+const ORACLE_PUBLIC_KEY_KEY: &str = "ORACLE_PUBLIC_KEY";
+
 // Smart Contract: SwiftVault
 #[contract]
 pub struct SwiftVault;
 
 #[contractimpl]
 impl SwiftVault {
+    // Function 0: initialize
+    pub fn initialize(env: Env, treasury: Address, oracle_public_key: BytesN<32>) {
+        if env.storage().persistent().has(&String::from_str(&env, TREASURY_KEY)) {
+            panic!("Contract is already initialized");
+        }
+        env.storage().persistent().set(&String::from_str(&env, TREASURY_KEY), &treasury);
+        env.storage().persistent().set(&String::from_str(&env, ORACLE_PUBLIC_KEY_KEY), &oracle_public_key);
+    }
+
+    // Private Helper: Verify Oracle Attestation
+    fn verify_oracle_attestation(env: &Env, attestation: &OracleAttestation) {
+        // Time Check
+        let current_timestamp = env.ledger().timestamp();
+        if current_timestamp > attestation.expiration_timestamp {
+            panic!("Signature Expired");
+        }
+
+        // Retrieve Oracle Public Key from Storage
+        let oracle_public_key: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&String::from_str(env, ORACLE_PUBLIC_KEY_KEY))
+            .unwrap();
+
+        // Reconstruct Raw Payload
+        let mut payload = soroban_sdk::Bytes::new(env);
+        payload.append(&attestation.asset_code);
+        
+        // Append scaled_price as 16-byte Big-Endian
+        let price_bytes = attestation.scaled_price.to_be_bytes();
+        payload.extend_from_slice(&price_bytes);
+        
+        // Append expiration_timestamp as 8-byte Big-Endian
+        let time_bytes = attestation.expiration_timestamp.to_be_bytes();
+        payload.extend_from_slice(&time_bytes);
+
+        // Verify Signature (No Pre-hashing)
+        env.crypto().ed25519_verify(
+            &oracle_public_key,
+            &payload,
+            &attestation.signature,
+        );
+    }
+
+    // Private Helper: Enforce Dust Shield
+    fn enforce_dust_shield(amount: i128, scaled_price: i128) {
+        let usd_value: i128 = (amount * scaled_price) / 10_000_000;
+        if usd_value < 1_000_000 {
+            panic!("Transfer under $1.00 minimum");
+        }
+    }
+
+    // Private Helper: Calculate Protocol Fee
+    fn calculate_protocol_fee(amount: i128, scaled_price: i128) -> i128 {
+        let base_fee: i128 = amount / 100;
+        let fee_usd_value: i128 = (base_fee * scaled_price) / 10_000_000;
+
+        if fee_usd_value < 5_000_000 {
+            // Clamp to $0.50
+            (5_000_000 * 10_000_000) / scaled_price
+        } else if fee_usd_value > 30_000_000 {
+            // Clamp to $3.00
+            (30_000_000 * 10_000_000) / scaled_price
+        } else {
+            base_fee
+        }
+    }
+
     // Function 1: direct_send
     pub fn direct_send(
         env: Env,
@@ -38,12 +120,26 @@ impl SwiftVault {
         receiver: Address,
         asset: Address,
         total_amount: i128,
-        fee_amount: i128,
-        treasury: Address,
+        attestation: OracleAttestation,
     ) {
         sender.require_auth();
 
+        // Step 1: Verify Oracle Attestation
+        Self::verify_oracle_attestation(&env, &attestation);
+
+        // Step 2: Enforce Dust Shield
+        Self::enforce_dust_shield(total_amount, attestation.scaled_price);
+
+        // Step 3: Calculate Protocol Fee
+        let fee_amount = Self::calculate_protocol_fee(total_amount, attestation.scaled_price);
         let principal = total_amount - fee_amount;
+
+        // Retrieve Treasury Address
+        let treasury: Address = env
+            .storage()
+            .persistent()
+            .get(&String::from_str(&env, TREASURY_KEY))
+            .unwrap();
 
         // Transfer fee to treasury
         let token_client = soroban_sdk::token::Client::new(&env, &asset);
@@ -81,19 +177,33 @@ impl SwiftVault {
         router_address: Address,
         usdc_address: Address,
         target_asset: Address,
-        treasury: Address,
-        fee_amount: i128,
         min_principal_out: i128,
         min_fee_out: i128,
         deadline: u64,
+        attestation: OracleAttestation,
     ) {
         receiver.require_auth();
+
+        // Step 1: Verify Oracle Attestation
+        Self::verify_oracle_attestation(&env, &attestation);
 
         // Get and remove EscrowRecord
         let record: EscrowRecord = env.storage().persistent().get(&receiver).unwrap();
         env.storage().persistent().remove(&receiver);
 
+        // Step 2: Enforce Dust Shield
+        Self::enforce_dust_shield(record.amount, attestation.scaled_price);
+
+        // Step 3: Calculate Protocol Fee
+        let fee_amount = Self::calculate_protocol_fee(record.amount, attestation.scaled_price);
         let principal_amount = record.amount - fee_amount;
+
+        // Retrieve Treasury Address
+        let treasury: Address = env
+            .storage()
+            .persistent()
+            .get(&String::from_str(&env, TREASURY_KEY))
+            .unwrap();
 
         let contract_address = env.current_contract_address();
         let token_client = soroban_sdk::token::Client::new(&env, &record.asset);

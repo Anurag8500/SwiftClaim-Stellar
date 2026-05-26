@@ -2,10 +2,27 @@ import { NextResponse } from 'next/server'
 import * as StellarSdk from '@stellar/stellar-sdk'
 import { server, TESTNET_USDC } from '@/lib/stellar'
 import { getTreasuryKeypair } from '@/lib/treasury'
+import { getAttestedPriceData, signPriceData } from '@/lib/oracle'
 
 export async function POST(request: Request) {
   try {
-    const { senderPublicKey, receiverPublicKey, amount } = await request.json()
+    const { senderPublicKey, receiverPublicKey, amount, assetCode = 'USDC' } = await request.json()
+
+    const priceData = await getAttestedPriceData(assetCode)
+    const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
+
+    if (amount * livePrice < 1.00) {
+      return NextResponse.json(
+        { error: 'Transfer amount must be at least $1.00 USD equivalent.' },
+        { status: 400 }
+      )
+    }
+
+    const signatureData = signPriceData(priceData.assetCode, priceData.scaledPrice, priceData.expirationTimestamp)
+    const attestationPayload = {
+      ...priceData,
+      ...signatureData
+    }
 
     const treasuryKeypair = getTreasuryKeypair()
     const treasuryPublicKey = treasuryKeypair.publicKey()
@@ -33,7 +50,7 @@ export async function POST(request: Request) {
       .setTimeout(StellarSdk.TimeoutInfinite)
       .build()
 
-    return NextResponse.json({ xdr: transaction.toXDR() })
+    return NextResponse.json({ xdr: transaction.toXDR(), attestationPayload })
   } catch (error) {
     console.error(error)
     return NextResponse.json(
