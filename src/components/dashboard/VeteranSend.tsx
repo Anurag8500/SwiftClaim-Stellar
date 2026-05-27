@@ -54,7 +54,11 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
           assetAddress: selectedAssetData.contractId,
         }),
       })
-      const { xdr } = await buildRes.json()
+      const buildData = await buildRes.json()
+      if (!buildRes.ok || buildData.error) {
+        throw new Error(buildData.error || `Build failed with status ${buildRes.status}`)
+      }
+      const { xdr } = buildData
 
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase: Networks.TESTNET,

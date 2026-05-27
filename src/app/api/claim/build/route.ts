@@ -11,8 +11,9 @@ export async function POST(request: Request) {
 
     const priceData = await getAttestedPriceData(assetCode)
     const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
+    const standardAmount = Number(amount) / 10_000_000
 
-    if (amount * livePrice < 1.00) {
+    if (standardAmount * livePrice < 1.00) {
       return NextResponse.json(
         { error: 'Transfer amount must be at least $1.00 USD equivalent.' },
         { status: 400 }
@@ -33,13 +34,13 @@ export async function POST(request: Request) {
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'claim_and_swap',
-      StellarSdk.nativeToScVal(new StellarSdk.Address(receiverPublicKey)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(routerAddress)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(usdcAddress)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(targetAsset)),
-      StellarSdk.nativeToScVal(BigInt(minPrincipalOut)),
-      StellarSdk.nativeToScVal(BigInt(minFeeOut)),
-      StellarSdk.nativeToScVal(BigInt(deadline)),
+      new StellarSdk.Address(receiverPublicKey).toScVal(),
+      new StellarSdk.Address(routerAddress).toScVal(),
+      new StellarSdk.Address(usdcAddress).toScVal(),
+      new StellarSdk.Address(targetAsset).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(minPrincipalOut), { type: 'i128' }),
+      StellarSdk.nativeToScVal(BigInt(minFeeOut), { type: 'i128' }),
+      StellarSdk.nativeToScVal(BigInt(deadline), { type: 'u64' }),
       formatAttestationToXDR(attestationPayload)
     )
 
@@ -77,13 +78,12 @@ export async function POST(request: Request) {
 
     // Simulate transaction
     const simulation = await sorobanServer.simulateTransaction(transaction)
-    if ('error' in simulation) {
-      throw new Error(simulation.error.toString())
+    if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
+      throw new Error(simulation.error)
     }
 
     // Assemble transaction
-    const assembledTxBuilder = StellarSdk.rpc.assembleTransaction(transaction, simulation)
-    const signedTx = assembledTxBuilder.build()
+    const signedTx = StellarSdk.rpc.assembleTransaction(transaction, simulation).build()
     signedTx.sign(treasuryKeypair)
 
     return NextResponse.json({ xdr: signedTx.toXDR(), attestationPayload })

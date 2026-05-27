@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const priceData = await getAttestedPriceData(assetCode)
     const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
 
-    if (amount * livePrice < 1.00) {
+    if (parseFloat(amount) * livePrice < 1.00) {
       return NextResponse.json(
         { error: 'Transfer amount must be at least $1.00 USD equivalent.' },
         { status: 400 }
@@ -25,15 +25,16 @@ export async function POST(request: Request) {
     }
 
     const sourceAccount = await server.loadAccount(senderPublicKey)
+    const amountInStroops = Math.floor(parseFloat(amount) * 10_000_000)
 
     // Build contract invocation
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'direct_send',
-      StellarSdk.nativeToScVal(new StellarSdk.Address(senderPublicKey)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(receiverPublicKey)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(assetAddress)),
-      StellarSdk.nativeToScVal(BigInt(amount)),
+      new StellarSdk.Address(senderPublicKey).toScVal(),
+      new StellarSdk.Address(receiverPublicKey).toScVal(),
+      new StellarSdk.Address(assetAddress).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(amountInStroops), { type: 'i128' }),
       formatAttestationToXDR(attestationPayload)
     )
 
@@ -47,13 +48,12 @@ export async function POST(request: Request) {
 
     // Simulate transaction
     const simulation = await sorobanServer.simulateTransaction(transaction)
-    if ('error' in simulation) {
-      throw new Error(simulation.error.toString())
+    if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
+      throw new Error(simulation.error)
     }
 
     // Assemble transaction
-    const assembledTxBuilder = StellarSdk.rpc.assembleTransaction(transaction, simulation)
-    const assembledTx = assembledTxBuilder.build()
+    const assembledTx = StellarSdk.rpc.assembleTransaction(transaction, simulation).build()
 
     return NextResponse.json({ xdr: assembledTx.toXDR(), attestationPayload })
   } catch (error) {

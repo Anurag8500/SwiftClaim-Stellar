@@ -59,7 +59,11 @@ export default function GenerateLink({ receiverPublicKey }: GenerateLinkProps) {
           amount,
         }),
       })
-      const { xdr } = await buildRes.json()
+      const buildData = await buildRes.json()
+      if (!buildRes.ok || buildData.error) {
+        throw new Error(buildData.error || `Build failed with status ${buildRes.status}`)
+      }
+      const { xdr } = buildData
 
       // Phase B: Sign with Freighter
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
@@ -67,12 +71,15 @@ export default function GenerateLink({ receiverPublicKey }: GenerateLinkProps) {
         address: userPublicKey,
       })
 
-      // Phase C: Submit to backend
-      await fetch('/api/lock/submit', {
+      const submitRes = await fetch('/api/lock/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signedXdr: signedTxXdr }),
       })
+      const submitData = await submitRes.json()
+      if (!submitRes.ok || submitData.error) {
+        throw new Error(submitData.error || `Submit failed with status ${submitRes.status}`)
+      }
 
       // Link generation: vaultId is receiverPublicKey
       setLink(`${window.location.origin}/claim?vault=${receiverPublicKey}`)

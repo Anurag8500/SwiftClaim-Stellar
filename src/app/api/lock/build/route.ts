@@ -7,14 +7,15 @@ export async function POST(request: Request) {
     const { senderPublicKey, receiverPublicKey, assetAddress, amount } = await request.json()
 
     const sourceAccount = await server.loadAccount(senderPublicKey)
+    const amountInStroops = Math.floor(parseFloat(amount) * 10_000_000)
 
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'lock_funds',
-      StellarSdk.nativeToScVal(new StellarSdk.Address(senderPublicKey)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(receiverPublicKey)),
-      StellarSdk.nativeToScVal(new StellarSdk.Address(assetAddress)),
-      StellarSdk.nativeToScVal(BigInt(amount))
+      new StellarSdk.Address(senderPublicKey).toScVal(),
+      new StellarSdk.Address(receiverPublicKey).toScVal(),
+      new StellarSdk.Address(assetAddress).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(amountInStroops), { type: 'i128' })
     )
 
     const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -26,12 +27,11 @@ export async function POST(request: Request) {
       .build()
 
     const simulation = await sorobanServer.simulateTransaction(transaction)
-    if ('error' in simulation) {
-      throw new Error(simulation.error.toString())
+    if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
+      throw new Error(simulation.error)
     }
 
-    const assembledTxBuilder = StellarSdk.rpc.assembleTransaction(transaction, simulation)
-    const assembledTx = assembledTxBuilder.build()
+    const assembledTx = StellarSdk.rpc.assembleTransaction(transaction, simulation).build()
 
     return NextResponse.json({ xdr: assembledTx.toXDR() })
   } catch (error) {

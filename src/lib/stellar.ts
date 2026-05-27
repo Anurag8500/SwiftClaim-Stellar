@@ -53,17 +53,22 @@ export async function fetchVaultData(vaultId: string) {
   return { amount, claimant: vaultId, assetCode, assetAddress }
 }
 
-export const SWIFTVAULT_CONTRACT_ID = 'CC4KLUJ2OW3FGHEY52NXP7IKXPGN6HFM3BXPUAKDJ2FFGGCUOVCKBMMP'
+export const SWIFTVAULT_CONTRACT_ID = 'CBDCFSZWOISQUV3HY4EA4FAOUQPYRBRKYTGHCUP344GOLEKRZ2LHUF5P'
+
+const usdcAsset = new StellarSdk.Asset('USDC', 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5')
+const eurcAsset = new StellarSdk.Asset('EURC', 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO')
 
 export const ASSETS = {
   USDC: {
     code: 'USDC',
-    contractId: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    issuer: usdcAsset.issuer,
+    contractId: usdcAsset.contractId(StellarSdk.Networks.TESTNET),
     decimals: 7,
   },
   EURC: {
     code: 'EURC',
-    contractId: 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO',
+    issuer: eurcAsset.issuer,
+    contractId: eurcAsset.contractId(StellarSdk.Networks.TESTNET),
     decimals: 7,
   },
 }
