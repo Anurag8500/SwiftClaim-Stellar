@@ -21,6 +21,8 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
 
   const selectedAssetData = ASSETS[selectedAsset as keyof typeof ASSETS]
   const estimatedFiatValue = parseFloat(amount) || 0
+  const fixedFee = 0.001
+  const totalCost = estimatedFiatValue + fixedFee
   const isBelowMinimum = estimatedFiatValue < 1.00
 
   const handleReset = () => {
@@ -135,6 +137,23 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
       {isBelowMinimum && amount && (
         <div className="rounded-2xl border border-red-500/30 bg-red-950/30 p-4 text-sm text-red-400">
           Transfer amount must be at least $1.00 USD equivalent.
+        </div>
+      )}
+
+      {!isBelowMinimum && estimatedFiatValue > 0 && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 space-y-1">
+          <div className="flex justify-between text-sm text-zinc-400">
+            <span>Receiver gets</span>
+            <span className="text-zinc-50">{estimatedFiatValue.toFixed(2)} {selectedAssetData.code}</span>
+          </div>
+          <div className="flex justify-between text-sm text-zinc-400">
+            <span>Network fee</span>
+            <span className="text-zinc-50">{fixedFee.toFixed(3)} {selectedAssetData.code}</span>
+          </div>
+          <div className="border-t border-zinc-800 pt-1 mt-1 flex justify-between text-sm font-semibold">
+            <span className="text-zinc-300">You pay</span>
+            <span className="text-blue-400">{totalCost.toFixed(3)} {selectedAssetData.code}</span>
+          </div>
         </div>
       )}
 

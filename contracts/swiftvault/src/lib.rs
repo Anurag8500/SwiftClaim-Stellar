@@ -112,13 +112,15 @@ impl SwiftVault {
         }
     }
 
-    // Function 1: direct_send
+    // Function 1: direct_send (Active wallet transfer)
+    // Fee model: Sender pays receiver the EXACT principal_amount.
+    // A fixed 0.001 USDC fee is charged ON TOP (sender pays principal + fee).
     pub fn direct_send(
         env: Env,
         sender: Address,
         receiver: Address,
         asset: Address,
-        total_amount: i128,
+        principal_amount: i128,
         attestation: OracleAttestation,
     ) -> Result<(), VaultError> {
         sender.require_auth();
@@ -130,15 +132,11 @@ impl SwiftVault {
         // Step 1: Verify Oracle Attestation
         Self::verify_oracle_attestation(&env, &attestation);
 
-        // Step 2: Enforce Dust Shield
-        Self::enforce_dust_shield(total_amount, attestation.scaled_price)?;
+        // Step 2: Enforce Dust Shield (check the principal amount)
+        Self::enforce_dust_shield(principal_amount, attestation.scaled_price)?;
 
-        // Step 3: Calculate Protocol Fee
-        let fee_amount = Self::calculate_protocol_fee(total_amount, attestation.scaled_price)?;
-        if fee_amount > total_amount {
-            return Err(VaultError::FeeExceedsTotalAmount);
-        }
-        let principal = total_amount - fee_amount;
+        // Step 3: Fixed fee = 0.001 USDC = 10,000 stroops (7 decimal asset)
+        let fee_amount: i128 = 10_000;
 
         // Retrieve Treasury Address
         let treasury: Address = env
@@ -147,12 +145,13 @@ impl SwiftVault {
             .get(&treasury_key)
             .ok_or(VaultError::TreasuryNotFound)?;
 
-        // Transfer fee to treasury
         let token_client = soroban_sdk::token::Client::new(&env, &asset);
-        token_client.transfer(&sender, &treasury, &fee_amount);
 
-        // Transfer principal to receiver
-        token_client.transfer(&sender, &receiver, &principal);
+        // Transfer exact principal to receiver (no deduction)
+        token_client.transfer(&sender, &receiver, &principal_amount);
+
+        // Transfer fixed fee to treasury (on top of principal)
+        token_client.transfer(&sender, &treasury, &fee_amount);
 
         Ok(())
     }
