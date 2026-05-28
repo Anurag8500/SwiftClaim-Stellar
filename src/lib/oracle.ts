@@ -1,17 +1,29 @@
 import * as StellarSdk from '@stellar/stellar-sdk'
 
+// Map of asset codes to their Binance trading pair symbols.
+// EURC is pegged to EUR; EURCUSDC doesn't exist on Binance, so we use EURUSDT as proxy.
+const BINANCE_SYMBOL_MAP: Record<string, string> = {
+  EURC: 'EURUSDT',
+}
+
 export async function getAttestedPriceData(assetCode: string) {
   let price: number
 
   if (assetCode === 'USDC') {
     price = 1.0
   } else {
-    const symbol = `${assetCode}USDC`
+    const symbol = BINANCE_SYMBOL_MAP[assetCode] || `${assetCode}USDC`
     const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, {
       next: { revalidate: 60 }
     })
+    if (!response.ok) {
+      throw new Error(`Binance API returned ${response.status} for symbol ${symbol}`)
+    }
     const data = await response.json()
     price = parseFloat(data.price)
+    if (isNaN(price) || price <= 0) {
+      throw new Error(`Invalid price received for ${assetCode} (symbol: ${symbol}): ${data.price}`)
+    }
   }
 
   const scaledPrice = Math.floor(price * 10_000_000).toString()

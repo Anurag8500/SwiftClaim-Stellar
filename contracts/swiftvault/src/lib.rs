@@ -114,13 +114,15 @@ impl SwiftVault {
 
     // Function 1: direct_send (Active wallet transfer)
     // Fee model: Sender pays receiver the EXACT principal_amount.
-    // A fixed 0.001 USDC fee is charged ON TOP (sender pays principal + fee).
+    // A fixed 0.001 USDC equivalent fee is charged ON TOP (sender pays principal + fee).
+    // Fee is collected in the same asset being transferred — no swap needed.
     pub fn direct_send(
         env: Env,
         sender: Address,
         receiver: Address,
         asset: Address,
         principal_amount: i128,
+        usdc_address: Address,
         attestation: OracleAttestation,
     ) -> Result<(), VaultError> {
         sender.require_auth();
@@ -135,9 +137,6 @@ impl SwiftVault {
         // Step 2: Enforce Dust Shield (check the principal amount)
         Self::enforce_dust_shield(principal_amount, attestation.scaled_price)?;
 
-        // Step 3: Fixed fee = 0.001 USDC = 10,000 stroops (7 decimal asset)
-        let fee_amount: i128 = 10_000;
-
         // Retrieve Treasury Address
         let treasury: Address = env
             .storage()
@@ -150,8 +149,21 @@ impl SwiftVault {
         // Transfer exact principal to receiver (no deduction)
         token_client.transfer(&sender, &receiver, &principal_amount);
 
-        // Transfer fixed fee to treasury (on top of principal)
-        token_client.transfer(&sender, &treasury, &fee_amount);
+        // Step 3: Collect fee
+        // Fixed fee = 0.001 USDC = 10,000 stroops (7 decimal asset)
+        if asset == usdc_address {
+            // Asset IS USDC — transfer 0.001 USDC directly to treasury
+            let usdc_fee: i128 = 10_000;
+            token_client.transfer(&sender, &treasury, &usdc_fee);
+        } else {
+            // Asset is NOT USDC (e.g. EURC) — calculate equivalent fee in token units
+            // and transfer directly to treasury in the same asset (no swap)
+            if attestation.scaled_price <= 0 {
+                return Err(VaultError::InvalidScaledPrice);
+            }
+            let fee_in_token: i128 = (10_000_i128 * 10_000_000) / attestation.scaled_price;
+            token_client.transfer(&sender, &treasury, &fee_in_token);
+        }
 
         Ok(())
     }

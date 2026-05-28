@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import * as StellarSdk from '@stellar/stellar-sdk'
-import { server, sorobanServer, SWIFTVAULT_CONTRACT_ID } from '@/lib/stellar'
+import { server, sorobanServer, SWIFTVAULT_CONTRACT_ID, ASSETS } from '@/lib/stellar'
 import { getAttestedPriceData, signPriceData } from '@/lib/oracle'
 import { formatAttestationToXDR } from '@/lib/soroban'
+
 
 export async function POST(request: Request) {
   try {
@@ -27,7 +28,11 @@ export async function POST(request: Request) {
     const sourceAccount = await server.loadAccount(senderPublicKey)
     const amountInStroops = Math.floor(parseFloat(amount) * 10_000_000)
 
-    // Build contract invocation
+    // Calculate fee in token units for the response
+    const USDC_FEE = 0.001 // 0.001 USDC
+    const feeInToken = assetCode === 'USDC' ? USDC_FEE : USDC_FEE / livePrice
+
+    // Build contract invocation — simplified: no router swap needed for fee
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'direct_send',
@@ -35,6 +40,7 @@ export async function POST(request: Request) {
       new StellarSdk.Address(receiverPublicKey).toScVal(),
       new StellarSdk.Address(assetAddress).toScVal(),
       StellarSdk.nativeToScVal(BigInt(amountInStroops), { type: 'i128' }),
+      new StellarSdk.Address(ASSETS.USDC.contractId).toScVal(),
       formatAttestationToXDR(attestationPayload)
     )
 
@@ -55,7 +61,12 @@ export async function POST(request: Request) {
     // Assemble transaction
     const assembledTx = StellarSdk.rpc.assembleTransaction(transaction, simulation).build()
 
-    return NextResponse.json({ xdr: assembledTx.toXDR(), attestationPayload })
+    return NextResponse.json({
+      xdr: assembledTx.toXDR(),
+      attestationPayload,
+      feeInToken,
+      livePrice,
+    })
   } catch (error) {
     console.error(error)
     return NextResponse.json(
@@ -64,3 +75,4 @@ export async function POST(request: Request) {
     )
   }
 }
+

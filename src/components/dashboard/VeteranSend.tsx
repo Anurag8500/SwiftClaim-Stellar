@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Loader2, CheckCircle } from 'lucide-react'
 import { useWallet } from '@/contexts/WalletContext'
@@ -17,13 +17,48 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [livePrice, setLivePrice] = useState<number | null>(null)
   const { isConnected, publicKey, connectWallet } = useWallet()
 
   const selectedAssetData = ASSETS[selectedAsset as keyof typeof ASSETS]
   const estimatedFiatValue = parseFloat(amount) || 0
-  const fixedFee = 0.001
-  const totalCost = estimatedFiatValue + fixedFee
+
+  // Fixed fee in USDC
+  const USDC_FEE = 0.001
+
+  // Fee in the selected asset's units
+  const feeInToken = selectedAsset === 'USDC'
+    ? USDC_FEE
+    : livePrice && livePrice > 0
+      ? USDC_FEE / livePrice
+      : null
+
+  const totalCost = feeInToken !== null ? estimatedFiatValue + feeInToken : null
   const isBelowMinimum = estimatedFiatValue < 1.00
+
+  // Fetch live price when asset changes
+  useEffect(() => {
+    if (selectedAsset === 'USDC') {
+      setLivePrice(1.0)
+      return
+    }
+
+    let cancelled = false
+    setLivePrice(null)
+
+    fetch(`/api/price?asset=${selectedAsset}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data.price) {
+          setLivePrice(data.price)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLivePrice(null)
+      })
+
+    return () => { cancelled = true }
+  }, [selectedAsset])
 
   const handleReset = () => {
     setAmount('50')
@@ -88,7 +123,7 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
         <CheckCircle className="mx-auto h-16 w-16 text-green-400" />
         <h2 className="text-2xl font-bold text-zinc-50">Transfer Complete</h2>
         <p className="text-zinc-400">
-          ${parseFloat(amount).toFixed(2)} {selectedAssetData.code} sent successfully.
+          {parseFloat(amount).toFixed(2)} {selectedAssetData.code} sent successfully.
         </p>
         <motion.button
           whileHover={{ scale: 1.02 }}
@@ -148,11 +183,22 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
           </div>
           <div className="flex justify-between text-sm text-zinc-400">
             <span>Network fee</span>
-            <span className="text-zinc-50">{fixedFee.toFixed(3)} {selectedAssetData.code}</span>
+            <span className="text-zinc-50">
+              {feeInToken !== null
+                ? `${feeInToken.toFixed(6)} ${selectedAssetData.code}`
+                : 'Loading...'}
+              {selectedAsset !== 'USDC' && feeInToken !== null && (
+                <span className="ml-1 text-zinc-500">(≈ $0.001 USDC)</span>
+              )}
+            </span>
           </div>
           <div className="border-t border-zinc-800 pt-1 mt-1 flex justify-between text-sm font-semibold">
             <span className="text-zinc-300">You pay</span>
-            <span className="text-blue-400">{totalCost.toFixed(3)} {selectedAssetData.code}</span>
+            <span className="text-blue-400">
+              {totalCost !== null
+                ? `${totalCost.toFixed(6)} ${selectedAssetData.code}`
+                : 'Loading...'}
+            </span>
           </div>
         </div>
       )}
@@ -184,3 +230,4 @@ export default function VeteranSend({ receiverPublicKey }: VeteranSendProps) {
     </div>
   )
 }
+
