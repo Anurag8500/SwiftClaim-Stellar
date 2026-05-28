@@ -3,11 +3,20 @@ import * as StellarSdk from '@stellar/stellar-sdk'
 import { server, sorobanServer, SWIFTVAULT_CONTRACT_ID } from '@/lib/stellar'
 import { getAttestedPriceData, signPriceData } from '@/lib/oracle'
 import { formatAttestationToXDR } from '@/lib/soroban'
-import { getTreasuryKeypair } from '@/lib/treasury'
 
 export async function POST(request: Request) {
   try {
-    const { receiverPublicKey, routerAddress, usdcAddress, targetAsset, minPrincipalOut, minFeeOut, deadline, amount, assetCode = 'USDC' } = await request.json()
+    const {
+      receiverPublicKey,
+      routerAddress,
+      usdcAddress,
+      targetAsset,
+      minPrincipalOut,
+      minFeeOut,
+      deadline,
+      amount,
+      assetCode = 'USDC',
+    } = await request.json()
 
     const priceData = await getAttestedPriceData(assetCode)
     const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
@@ -20,17 +29,22 @@ export async function POST(request: Request) {
       )
     }
 
-    const signatureData = signPriceData(priceData.assetCode, priceData.scaledPrice, priceData.expirationTimestamp)
-    const attestationPayload = {
-      ...priceData,
-      ...signatureData
-    }
+    const signatureData = signPriceData(
+      priceData.assetCode,
+      priceData.scaledPrice,
+      priceData.expirationTimestamp
+    )
+    const attestationPayload = { ...priceData, ...signatureData }
 
-    const treasuryKeypair = getTreasuryKeypair()
-    const treasuryPublicKey = treasuryKeypair.publicKey()
-    const sourceAccount = await server.loadAccount(treasuryPublicKey)
+    // Use RECEIVER as the tx source. The receiver's wallet will sign
+    // this tx classically (as source) AND sign the Soroban auth entries.
+    // Treasury pays fees via a fee bump wrapper in the submit step.
+    const sourceAccount = await server.loadAccount(receiverPublicKey)
 
-    // Build contract invocation
+    // Build single Soroban operation — claim_and_swap
+    // IMPORTANT: This route must be called AFTER the activation tx has been
+    // confirmed on-chain, otherwise simulation will fail because the
+    // receiver's account/trustline won't exist in the ledger yet.
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'claim_and_swap',
@@ -44,49 +58,28 @@ export async function POST(request: Request) {
       formatAttestationToXDR(attestationPayload)
     )
 
-    const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+    const claimTx = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
       networkPassphrase: StellarSdk.Networks.TESTNET,
     })
-      .addOperation(
-        StellarSdk.Operation.beginSponsoringFutureReserves({
-          sponsoredId: receiverPublicKey,
-        })
-      )
-      .addOperation(
-        StellarSdk.Operation.createAccount({
-          destination: receiverPublicKey,
-          startingBalance: '0',
-        })
-      )
-      .addOperation(
-        StellarSdk.Operation.changeTrust({
-          asset: new StellarSdk.Address(targetAsset).toString() === 'native' 
-            ? StellarSdk.Asset.native() 
-            : new StellarSdk.Asset(assetCode, targetAsset),
-          source: receiverPublicKey,
-        })
-      )
       .addOperation(invokeOp)
-      .addOperation(
-        StellarSdk.Operation.endSponsoringFutureReserves({
-          source: receiverPublicKey,
-        })
-      )
       .setTimeout(300)
       .build()
 
-    // Simulate transaction
-    const simulation = await sorobanServer.simulateTransaction(transaction)
+    // Simulate — single op, works with Soroban RPC
+    const simulation = await sorobanServer.simulateTransaction(claimTx)
     if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
       throw new Error(simulation.error)
     }
 
-    // Assemble transaction
-    const signedTx = StellarSdk.rpc.assembleTransaction(transaction, simulation).build()
-    signedTx.sign(treasuryKeypair)
+    // assembleTransaction injects Soroban auth entries for receiver.require_auth()
+    const assembledClaimTx = StellarSdk.rpc.assembleTransaction(claimTx, simulation).build()
+    // DO NOT sign here — receiver signs in frontend, treasury wraps in fee bump in submit
 
-    return NextResponse.json({ xdr: signedTx.toXDR(), attestationPayload })
+    return NextResponse.json({
+      xdr: assembledClaimTx.toXDR(),
+      attestationPayload,
+    })
   } catch (error) {
     console.error(error)
     return NextResponse.json(

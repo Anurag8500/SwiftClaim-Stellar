@@ -13,11 +13,19 @@ export async function checkIfGhost(publicKey: string): Promise<boolean> {
   try {
     await server.loadAccount(publicKey)
     return false
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('404')) {
+  } catch (error: unknown) {
+    // Horizon throws NotFoundError when account doesn't exist
+    // The error message is "Not Found" and/or response.status is 404
+    const err = error as Record<string, unknown>
+    if (
+      (error instanceof Error && (error.message.includes('Not Found') || error.message.includes('404'))) ||
+      (err?.response && (err.response as Record<string, unknown>)?.status === 404) ||
+      (typeof err?.status === 'number' && err.status === 404)
+    ) {
       return true
     }
-    throw error
+    console.error('Unexpected error checking ghost status:', error)
+    return true // Treat as ghost by default if there's an error
   }
 }
 
@@ -27,7 +35,7 @@ export async function fetchVaultData(vaultId: string) {
   const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
     new StellarSdk.xdr.LedgerKeyContractData({
       contract: new StellarSdk.Address(SWIFTVAULT_CONTRACT_ID).toScAddress(),
-      key: StellarSdk.nativeToScVal(new StellarSdk.Address(vaultId)),
+      key: new StellarSdk.Address(vaultId).toScVal(),
       durability: StellarSdk.xdr.ContractDataDurability.persistent(),
     })
   )
@@ -53,7 +61,7 @@ export async function fetchVaultData(vaultId: string) {
   return { amount, claimant: vaultId, assetCode, assetAddress }
 }
 
-export const SWIFTVAULT_CONTRACT_ID = 'CBDCFSZWOISQUV3HY4EA4FAOUQPYRBRKYTGHCUP344GOLEKRZ2LHUF5P'
+export const SWIFTVAULT_CONTRACT_ID = 'CCFFDV3RJRQV3FAXKHEEUKHE3HDDLRQZWLW6SKRYR2S3VJMPAFM5Z5S3'
 
 const usdcAsset = new StellarSdk.Asset('USDC', 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5')
 const eurcAsset = new StellarSdk.Asset('EURC', 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO')

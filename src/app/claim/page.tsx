@@ -19,6 +19,7 @@ function ClaimPageContent() {
   const [vaultData, setVaultData] = useState<{ amount: string; claimant: string; assetCode: string; assetAddress: string } | null>(null)
   const [isAuthorized, setIsAuthorized] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [stepMessage, setStepMessage] = useState('Processing Secure Claim...')
   const [success, setSuccess] = useState(false)
   const [targetAsset, setTargetAsset] = useState('USDC')
 
@@ -61,6 +62,50 @@ function ClaimPageContent() {
     setIsProcessing(true)
     setError(null)
     try {
+      // ── Phase 1: Activate ghost wallet (if needed) ──────────────────────
+      // Must complete on-chain BEFORE building the Soroban claim tx,
+      // because simulation needs to see the account + trustline in the ledger.
+      if (isGhost) {
+        setStepMessage('Building wallet activation...')
+        const activateRes = await fetch('/api/claim/activate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            receiverPublicKey: publicKey,
+            targetAsset: targetAssetData.contractId,
+          }),
+        })
+        const activateData = await activateRes.json()
+        if (!activateRes.ok || activateData.error) {
+          throw new Error(activateData.error || 'Failed to build activation tx')
+        }
+
+        // Receiver co-signs (for changeTrust + endSponsoringFutureReserves)
+        setStepMessage('Sign wallet activation (1/2)...')
+        const { signedTxXdr: signedActivation } = await StellarWalletsKit.signTransaction(
+          activateData.xdr,
+          { networkPassphrase: Networks.TESTNET, address: publicKey }
+        )
+
+        // Submit activation to Horizon and wait for confirmation
+        setStepMessage('Activating wallet on Stellar...')
+        const activateSubmitRes = await fetch('/api/claim/activate/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signedXdr: signedActivation }),
+        })
+        const activateSubmitData = await activateSubmitRes.json()
+        if (!activateSubmitRes.ok || activateSubmitData.error) {
+          throw new Error(activateSubmitData.error || 'Activation submission failed')
+        }
+
+        // Wait for ledger to close so Soroban simulation sees the new account
+        await new Promise(resolve => setTimeout(resolve, 6000))
+      }
+
+      // ── Phase 2: Build & submit Soroban claim ──────────────────────────
+      // NOW the account exists with a trustline, so simulation will succeed.
+      setStepMessage(isGhost ? 'Building claim (2/2)...' : 'Building claim...')
       const buildRes = await fetch('/api/claim/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -76,18 +121,29 @@ function ClaimPageContent() {
           assetCode: vaultData.assetCode,
         }),
       })
-      const { xdr } = await buildRes.json()
+      const buildData = await buildRes.json()
+      if (!buildRes.ok || buildData.error) {
+        throw new Error(buildData.error || `Claim build failed`)
+      }
 
-      const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
-        networkPassphrase: Networks.TESTNET,
-        address: publicKey,
-      })
+      // Receiver signs Soroban auth entries (for receiver.require_auth())
+      setStepMessage(isGhost ? 'Sign claim (2/2)...' : 'Sign claim transaction...')
+      const { signedTxXdr: signedClaimXdr } = await StellarWalletsKit.signTransaction(
+        buildData.xdr,
+        { networkPassphrase: Networks.TESTNET, address: publicKey }
+      )
 
-      await fetch('/api/claim/submit', {
+      // Submit claim to Soroban RPC
+      setStepMessage('Submitting claim to network...')
+      const submitRes = await fetch('/api/claim/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signedXdr: signedTxXdr }),
+        body: JSON.stringify({ signedXdr: signedClaimXdr }),
       })
+      const submitData = await submitRes.json()
+      if (!submitRes.ok || submitData.error) {
+        throw new Error(submitData.error || 'Claim submission failed')
+      }
 
       setSuccess(true)
     } catch (err) {
@@ -95,6 +151,7 @@ function ClaimPageContent() {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred')
     } finally {
       setIsProcessing(false)
+      setStepMessage('Processing Secure Claim...')
     }
   }
 
@@ -203,7 +260,7 @@ function ClaimPageContent() {
                 {isProcessing ? (
                   <div className="flex items-center justify-center gap-2">
                     <Loader2 className="h-5 w-5 animate-spin" />
-                    Processing Secure Claim...
+                    {stepMessage}
                   </div>
                 ) : isGhost ? (
                   `Claim ${targetAssetData.code} ($0.50 Network Activation Fee)`
