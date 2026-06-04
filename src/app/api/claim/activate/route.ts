@@ -5,25 +5,42 @@ import { getTreasuryKeypair } from '@/lib/treasury'
 
 export async function POST(request: Request) {
   try {
-    const { receiverPublicKey, targetAsset } = await request.json()
+    const { receiverPublicKey, targetAsset, lockedAssetContractId } = await request.json()
 
     const treasuryKeypair = getTreasuryKeypair()
     const treasuryPublicKey = treasuryKeypair.publicKey()
     const sourceAccount = await server.loadAccount(treasuryPublicKey)
 
-    // Look up the correct asset issuer from the ASSETS registry
-    let targetClassicAsset: StellarSdk.Asset = StellarSdk.Asset.native()
-    let targetAssetCode = 'XLM'
-    for (const [, assetInfo] of Object.entries(ASSETS)) {
-      if (assetInfo.contractId === targetAsset) {
-        targetClassicAsset = new StellarSdk.Asset(assetInfo.code, assetInfo.issuer!)
-        targetAssetCode = assetInfo.code
-        break
+    // Resolve classic assets from contract IDs
+    function resolveClassicAsset(contractId: string): { asset: StellarSdk.Asset; code: string } | null {
+      for (const [, assetInfo] of Object.entries(ASSETS)) {
+        if (assetInfo.contractId === contractId) {
+          return {
+            asset: new StellarSdk.Asset(assetInfo.code, assetInfo.issuer!),
+            code: assetInfo.code,
+          }
+        }
+      }
+      return null
+    }
+
+    const targetAssetInfo = resolveClassicAsset(targetAsset)
+    const lockedAssetInfo = lockedAssetContractId ? resolveClassicAsset(lockedAssetContractId) : null
+
+    // Collect unique trustlines needed (locked asset + target asset, deduplicated)
+    const trustlines: StellarSdk.Asset[] = []
+    if (lockedAssetInfo && lockedAssetInfo.code !== 'XLM') {
+      trustlines.push(lockedAssetInfo.asset)
+    }
+    if (targetAssetInfo && targetAssetInfo.code !== 'XLM') {
+      // Only add if different from locked asset
+      if (!lockedAssetInfo || targetAssetInfo.code !== lockedAssetInfo.code) {
+        trustlines.push(targetAssetInfo.asset)
       }
     }
 
     // Build classic activation tx:
-    // beginSponsoring → createAccount → changeTrust → endSponsoring
+    // beginSponsoring → createAccount → changeTrust(s) → endSponsoring
     // Treasury is the source (sponsor), receiver co-signs client-side.
     const txBuilder = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
@@ -41,10 +58,11 @@ export async function POST(request: Request) {
         })
       )
 
-    if (targetAssetCode !== 'XLM') {
+    // Add trustline for each asset (locked + target if different)
+    for (const classicAsset of trustlines) {
       txBuilder.addOperation(
         StellarSdk.Operation.changeTrust({
-          asset: targetClassicAsset,
+          asset: classicAsset,
           source: receiverPublicKey,
         })
       )

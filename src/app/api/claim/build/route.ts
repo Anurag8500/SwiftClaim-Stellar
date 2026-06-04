@@ -8,12 +8,6 @@ export async function POST(request: Request) {
   try {
     const {
       receiverPublicKey,
-      routerAddress,
-      usdcAddress,
-      targetAsset,
-      minPrincipalOut,
-      minFeeOut,
-      deadline,
       amount,
       assetCode = 'USDC',
     } = await request.json()
@@ -41,20 +35,12 @@ export async function POST(request: Request) {
     // Treasury pays fees via a fee bump wrapper in the submit step.
     const sourceAccount = await server.loadAccount(receiverPublicKey)
 
-    // Build single Soroban operation — claim_and_swap
-    // IMPORTANT: This route must be called AFTER the activation tx has been
-    // confirmed on-chain, otherwise simulation will fail because the
-    // receiver's account/trustline won't exist in the ledger yet.
+    // Build single Soroban operation — simplified claim (no router, no swap)
+    // The contract releases principal → receiver, fee → treasury, both in locked asset.
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
-      'claim_and_swap',
+      'claim',
       new StellarSdk.Address(receiverPublicKey).toScVal(),
-      new StellarSdk.Address(routerAddress).toScVal(),
-      new StellarSdk.Address(usdcAddress).toScVal(),
-      new StellarSdk.Address(targetAsset).toScVal(),
-      StellarSdk.nativeToScVal(BigInt(minPrincipalOut), { type: 'i128' }),
-      StellarSdk.nativeToScVal(BigInt(minFeeOut), { type: 'i128' }),
-      StellarSdk.nativeToScVal(BigInt(deadline), { type: 'u64' }),
       formatAttestationToXDR(attestationPayload)
     )
 

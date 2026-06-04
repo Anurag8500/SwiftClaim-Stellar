@@ -57,22 +57,27 @@ function ClaimPageContent() {
     }
   }, [isConnected, publicKey, vaultData, setIsGhost])
 
+  const needsSwap = vaultData ? vaultData.assetCode !== targetAsset : false
+
   const handleClaim = async () => {
     if (!vaultId || !publicKey || !vaultData) return
     setIsProcessing(true)
     setError(null)
     try {
+      const totalSteps = isGhost ? (needsSwap ? 3 : 2) : (needsSwap ? 2 : 1)
+      let currentStep = 0
+
       // ── Phase 1: Activate ghost wallet (if needed) ──────────────────────
-      // Must complete on-chain BEFORE building the Soroban claim tx,
-      // because simulation needs to see the account + trustline in the ledger.
       if (isGhost) {
-        setStepMessage('Building wallet activation...')
+        currentStep++
+        setStepMessage(`Building wallet activation (${currentStep}/${totalSteps})...`)
         const activateRes = await fetch('/api/claim/activate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             receiverPublicKey: publicKey,
             targetAsset: targetAssetData.contractId,
+            lockedAssetContractId: vaultData.assetAddress,
           }),
         })
         const activateData = await activateRes.json()
@@ -80,14 +85,12 @@ function ClaimPageContent() {
           throw new Error(activateData.error || 'Failed to build activation tx')
         }
 
-        // Receiver co-signs (for changeTrust + endSponsoringFutureReserves)
-        setStepMessage('Sign wallet activation (1/2)...')
+        setStepMessage(`Sign wallet activation (${currentStep}/${totalSteps})...`)
         const { signedTxXdr: signedActivation } = await StellarWalletsKit.signTransaction(
           activateData.xdr,
           { networkPassphrase: Networks.TESTNET, address: publicKey }
         )
 
-        // Submit activation to Horizon and wait for confirmation
         setStepMessage('Activating wallet on Stellar...')
         const activateSubmitRes = await fetch('/api/claim/activate/submit', {
           method: 'POST',
@@ -103,37 +106,30 @@ function ClaimPageContent() {
         await new Promise(resolve => setTimeout(resolve, 6000))
       }
 
-      // ── Phase 2: Build & submit Soroban claim ──────────────────────────
-      // NOW the account exists with a trustline, so simulation will succeed.
-      setStepMessage(isGhost ? 'Building claim (2/2)...' : 'Building claim...')
+      // ── Phase 2: Claim from contract (Soroban) ──────────────────────────
+      // Contract releases principal → receiver, fee → treasury (in locked asset).
+      currentStep++
+      setStepMessage(`Building claim (${currentStep}/${totalSteps})...`)
       const buildRes = await fetch('/api/claim/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           receiverPublicKey: publicKey,
-          routerAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
-          usdcAddress: ASSETS.USDC.contractId,
-          targetAsset: targetAssetData.contractId,
-          minPrincipalOut: '0',
-          minFeeOut: '0',
-          deadline: Math.floor(Date.now() / 1000) + 3600,
           amount: vaultData.amount,
           assetCode: vaultData.assetCode,
         }),
       })
       const buildData = await buildRes.json()
       if (!buildRes.ok || buildData.error) {
-        throw new Error(buildData.error || `Claim build failed`)
+        throw new Error(buildData.error || 'Claim build failed')
       }
 
-      // Receiver signs Soroban auth entries (for receiver.require_auth())
-      setStepMessage(isGhost ? 'Sign claim (2/2)...' : 'Sign claim transaction...')
+      setStepMessage(`Sign claim (${currentStep}/${totalSteps})...`)
       const { signedTxXdr: signedClaimXdr } = await StellarWalletsKit.signTransaction(
         buildData.xdr,
         { networkPassphrase: Networks.TESTNET, address: publicKey }
       )
 
-      // Submit claim to Soroban RPC
       setStepMessage('Submitting claim to network...')
       const submitRes = await fetch('/api/claim/submit', {
         method: 'POST',
@@ -143,6 +139,63 @@ function ClaimPageContent() {
       const submitData = await submitRes.json()
       if (!submitRes.ok || submitData.error) {
         throw new Error(submitData.error || 'Claim submission failed')
+      }
+
+      // ── Phase 3: Swap via pathPaymentStrictSend (if cross-asset) ────────
+      // Uses Stellar SDEX + AMM pools for multi-hop routing.
+      if (needsSwap) {
+        currentStep++
+        // Calculate principal amount (amount - fee). Fee is ~1% clamped $0.50-$3.00.
+        // For simplicity, swap the full balance the receiver just got.
+        // The contract already deducted the fee, so we use a rough calculation.
+        const rawAmount = Number(vaultData.amount)
+        const scaledPrice = parseInt(buildData.attestationPayload?.scaledPrice || '10000000')
+        // Approximate principal: amount - fee (contract already calculated)
+        // We'll send all received tokens. The exact amount is the principal the contract sent.
+        const feeBase = rawAmount / 100
+        const feeUsdValue = (feeBase * scaledPrice) / 10_000_000
+        let feeAmount: number
+        if (feeUsdValue < 5_000_000) {
+          feeAmount = (5_000_000 * 10_000_000) / scaledPrice
+        } else if (feeUsdValue > 30_000_000) {
+          feeAmount = (30_000_000 * 10_000_000) / scaledPrice
+        } else {
+          feeAmount = feeBase
+        }
+        const principalAmount = Math.floor(rawAmount - feeAmount)
+
+        setStepMessage(`Building swap (${currentStep}/${totalSteps})...`)
+        const swapBuildRes = await fetch('/api/claim/swap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            receiverPublicKey: publicKey,
+            sendAmount: principalAmount.toString(),
+            lockedAssetCode: vaultData.assetCode,
+            targetAssetCode: targetAsset,
+          }),
+        })
+        const swapBuildData = await swapBuildRes.json()
+        if (!swapBuildRes.ok || swapBuildData.error) {
+          throw new Error(swapBuildData.error || 'Swap build failed')
+        }
+
+        setStepMessage(`Sign swap (${currentStep}/${totalSteps})...`)
+        const { signedTxXdr: signedSwapXdr } = await StellarWalletsKit.signTransaction(
+          swapBuildData.xdr,
+          { networkPassphrase: Networks.TESTNET, address: publicKey }
+        )
+
+        setStepMessage('Submitting swap to network...')
+        const swapSubmitRes = await fetch('/api/claim/swap/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signedXdr: signedSwapXdr }),
+        })
+        const swapSubmitData = await swapSubmitRes.json()
+        if (!swapSubmitRes.ok || swapSubmitData.error) {
+          throw new Error(swapSubmitData.error || 'Swap submission failed')
+        }
       }
 
       setSuccess(true)

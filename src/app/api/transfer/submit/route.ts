@@ -29,7 +29,9 @@ export async function POST(request: Request) {
 
     // Poll for transaction status
     let receipt
-    while (true) {
+    let attempts = 0
+    const maxAttempts = 30
+    while (attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 2000))
       receipt = await sorobanServer.getTransaction(transactionHash)
 
@@ -38,6 +40,11 @@ export async function POST(request: Request) {
       } else if (receipt.status === StellarSdk.rpc.Api.GetTransactionStatus.FAILED) {
         throw new Error('Transaction failed')
       }
+      attempts++
+    }
+
+    if (attempts >= maxAttempts) {
+      throw new Error('Transaction confirmation timed out')
     }
 
     return NextResponse.json({ success: true, receipt })

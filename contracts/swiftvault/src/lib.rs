@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracterror, contracttype, Address, Bytes, BytesN, Env, String, Vec,
+    contract, contractimpl, contracterror, contracttype, Address, Bytes, BytesN, Env, String,
 };
 
 // Custom Error Enum
@@ -15,19 +15,6 @@ pub enum VaultError {
     FeeExceedsTotalAmount = 4,
     EscrowNotFound = 5,
     TreasuryNotFound = 6,
-}
-
-// External Interfaces: SoroswapRouter
-#[soroban_sdk::contractclient(name = "SoroswapRouterClient")]
-pub trait SoroswapRouterTrait {
-    fn swap_exact_tokens_for_tokens(
-        env: Env,
-        amount_in: i128,
-        amount_out_min: i128,
-        path: Vec<Address>,
-        to: Address,
-        deadline: u64,
-    ) -> Vec<i128>;
 }
 
 // Data Structures: EscrowRecord
@@ -192,16 +179,13 @@ impl SwiftVault {
         env.storage().persistent().extend_ttl(&receiver, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
-    // Function 3: claim_and_swap
-    pub fn claim_and_swap(
+    // Function 3: claim (Ghost wallet claim)
+    // Releases escrowed funds: principal → receiver, fee → treasury.
+    // Both transfers are in the LOCKED asset (no swap in contract).
+    // Cross-asset swaps are handled externally via Stellar pathPaymentStrictSend.
+    pub fn claim(
         env: Env,
         receiver: Address,
-        router_address: Address,
-        usdc_address: Address,
-        target_asset: Address,
-        min_principal_out: i128,
-        min_fee_out: i128,
-        deadline: u64,
         attestation: OracleAttestation,
     ) -> Result<(), VaultError> {
         receiver.require_auth();
@@ -217,7 +201,7 @@ impl SwiftVault {
         // Step 2: Enforce Dust Shield
         Self::enforce_dust_shield(record.amount, attestation.scaled_price)?;
 
-        // Step 3: Calculate Protocol Fee
+        // Step 3: Calculate Protocol Fee (percentage-based, clamped $0.50–$3.00)
         let fee_amount = Self::calculate_protocol_fee(record.amount, attestation.scaled_price)?;
         let principal_amount = record.amount - fee_amount;
 
@@ -233,44 +217,11 @@ impl SwiftVault {
         let contract_address = env.current_contract_address();
         let token_client = soroban_sdk::token::Client::new(&env, &record.asset);
 
-        // Approve router to spend record.amount
-        let ledger_sequence = env.ledger().sequence();
-        token_client.approve(
-            &contract_address,
-            &router_address,
-            &record.amount,
-            &(ledger_sequence + 1000),
-        );
+        // Transfer principal to receiver in the locked asset
+        token_client.transfer(&contract_address, &receiver, &principal_amount);
 
-        // Swap 1: Principal
-        if record.asset != target_asset {
-            let path = Vec::from_array(&env, [record.asset.clone(), target_asset.clone()]);
-            let router_client = SoroswapRouterClient::new(&env, &router_address);
-            router_client.swap_exact_tokens_for_tokens(
-                &principal_amount,
-                &min_principal_out,
-                &path,
-                &receiver,
-                &deadline,
-            );
-        } else {
-            token_client.transfer(&contract_address, &receiver, &principal_amount);
-        }
-
-        // Swap 2: Fee
-        if record.asset != usdc_address {
-            let path = Vec::from_array(&env, [record.asset.clone(), usdc_address.clone()]);
-            let router_client = SoroswapRouterClient::new(&env, &router_address);
-            router_client.swap_exact_tokens_for_tokens(
-                &fee_amount,
-                &min_fee_out,
-                &path,
-                &treasury,
-                &deadline,
-            );
-        } else {
-            token_client.transfer(&contract_address, &treasury, &fee_amount);
-        }
+        // Transfer fee to treasury in the locked asset
+        token_client.transfer(&contract_address, &treasury, &fee_amount);
 
         Ok(())
     }
