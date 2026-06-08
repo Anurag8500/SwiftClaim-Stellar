@@ -3,6 +3,13 @@ import * as StellarSdk from '@stellar/stellar-sdk'
 import { sorobanServer } from '@/lib/stellar'
 import { getTreasuryKeypair } from '@/lib/treasury'
 
+/**
+ * Active Wallet Transfer — Submit
+ * 
+ * Submits the Soroban direct_send transaction.
+ * Fee is collected in the transfer asset and stored as-is in treasury.
+ * No per-transaction swap — treasury rebalances periodically.
+ */
 export async function POST(request: Request) {
   try {
     const { signedXdr } = await request.json()

@@ -4,6 +4,25 @@ import { server, sorobanServer, SWIFTVAULT_CONTRACT_ID } from '@/lib/stellar'
 import { getAttestedPriceData, signPriceData } from '@/lib/oracle'
 import { formatAttestationToXDR } from '@/lib/soroban'
 
+/**
+ * Replicate the contract's fee calculation using the SAME integer math.
+ * Must match contracts/swiftvault/src/lib.rs::calculate_protocol_fee exactly.
+ */
+function calculateProtocolFee(amount: bigint, scaledPrice: bigint): bigint {
+  const baseFee = amount / 100n
+  const feeUsdValue = (baseFee * scaledPrice) / 10_000_000n
+
+  if (feeUsdValue < 5_000_000n) {
+    // Clamp to $0.50 equivalent
+    return (5_000_000n * 10_000_000n) / scaledPrice
+  } else if (feeUsdValue > 30_000_000n) {
+    // Clamp to $3.00 equivalent
+    return (30_000_000n * 10_000_000n) / scaledPrice
+  } else {
+    return baseFee
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const {
@@ -13,8 +32,10 @@ export async function POST(request: Request) {
     } = await request.json()
 
     const priceData = await getAttestedPriceData(assetCode)
-    const livePrice = parseInt(priceData.scaledPrice) / 10_000_000
-    const standardAmount = Number(amount) / 10_000_000
+    const scaledPrice = BigInt(priceData.scaledPrice)
+    const livePrice = Number(scaledPrice) / 10_000_000
+    const rawAmount = BigInt(amount)
+    const standardAmount = Number(rawAmount) / 10_000_000
 
     if (standardAmount * livePrice < 1.00) {
       return NextResponse.json(
@@ -30,13 +51,13 @@ export async function POST(request: Request) {
     )
     const attestationPayload = { ...priceData, ...signatureData }
 
-    // Use RECEIVER as the tx source. The receiver's wallet will sign
-    // this tx classically (as source) AND sign the Soroban auth entries.
-    // Treasury pays fees via a fee bump wrapper in the submit step.
+    // Calculate fee and principal using EXACT same BigInt math as the contract
+    const feeAmount = calculateProtocolFee(rawAmount, scaledPrice)
+    const principalAmount = rawAmount - feeAmount
+
+    // Use RECEIVER as the tx source. Treasury pays fees via fee bump in submit step.
     const sourceAccount = await server.loadAccount(receiverPublicKey)
 
-    // Build single Soroban operation — simplified claim (no router, no swap)
-    // The contract releases principal → receiver, fee → treasury, both in locked asset.
     const contract = new StellarSdk.Contract(SWIFTVAULT_CONTRACT_ID)
     const invokeOp = contract.call(
       'claim',
@@ -52,19 +73,19 @@ export async function POST(request: Request) {
       .setTimeout(300)
       .build()
 
-    // Simulate — single op, works with Soroban RPC
     const simulation = await sorobanServer.simulateTransaction(claimTx)
     if (StellarSdk.rpc.Api.isSimulationError(simulation)) {
       throw new Error(simulation.error)
     }
 
-    // assembleTransaction injects Soroban auth entries for receiver.require_auth()
     const assembledClaimTx = StellarSdk.rpc.assembleTransaction(claimTx, simulation).build()
-    // DO NOT sign here — receiver signs in frontend, treasury wraps in fee bump in submit
 
     return NextResponse.json({
       xdr: assembledClaimTx.toXDR(),
       attestationPayload,
+      // Return exact amounts so frontend doesn't need to recalculate
+      principalAmount: principalAmount.toString(),
+      feeAmount: feeAmount.toString(),
     })
   } catch (error) {
     console.error(error)

@@ -4,6 +4,19 @@ import { server, ASSETS } from '@/lib/stellar'
 import { getAttestedPriceData } from '@/lib/oracle'
 import { getTreasuryKeypair } from '@/lib/treasury'
 
+/**
+ * Treasury Conversion Engine — Build
+ * 
+ * Converts locked asset → target asset using live oracle rates.
+ * Treasury acts as the counterparty: receives locked asset, sends target asset.
+ * 
+ * Math (BigInt, no floating point):
+ *   convertedAmount = sendAmount * lockedScaledPrice / targetScaledPrice
+ * 
+ * Two payment ops in one atomic tx:
+ *   Op 1: Receiver → Treasury (locked asset)  [source: receiver]
+ *   Op 2: Treasury → Receiver (target asset)  [source: treasury]
+ */
 export async function POST(request: Request) {
   try {
     const { receiverPublicKey, sendAmount, lockedAssetCode, targetAssetCode } = await request.json()
@@ -16,25 +29,27 @@ export async function POST(request: Request) {
     }
 
     if (lockedAssetCode === targetAssetCode) {
-      return NextResponse.json({ error: 'No swap needed for same asset' }, { status: 400 })
+      return NextResponse.json({ error: 'No conversion needed for same asset' }, { status: 400 })
     }
 
-    // Fetch oracle prices for both assets to calculate conversion
+    // Fetch live oracle prices for BOTH assets (same Binance source as contract attestation)
     const lockedPriceData = await getAttestedPriceData(lockedAssetCode)
     const targetPriceData = await getAttestedPriceData(targetAssetCode)
 
-    const lockedPrice = parseInt(lockedPriceData.scaledPrice) // price * 10^7
-    const targetPrice = parseInt(targetPriceData.scaledPrice) // price * 10^7
+    const lockedScaledPrice = BigInt(lockedPriceData.scaledPrice)
+    const targetScaledPrice = BigInt(targetPriceData.scaledPrice)
+    const sendAmountBig = BigInt(sendAmount)
 
-    if (lockedPrice <= 0 || targetPrice <= 0) {
+    if (lockedScaledPrice <= 0n || targetScaledPrice <= 0n) {
       return NextResponse.json({ error: 'Invalid oracle prices' }, { status: 500 })
     }
 
-    // Calculate converted amount: sendAmount (in locked asset stroops) → target asset stroops
+    // Convert using BigInt integer math (no floating point, no rounding errors)
     // Formula: convertedAmount = sendAmount * lockedPrice / targetPrice
-    const convertedAmount = Math.floor((Number(sendAmount) * lockedPrice) / targetPrice)
+    // Example: 25000000 USDC stroops * 10000000 / 11200000 = 22321428 EURC stroops
+    const convertedAmount = sendAmountBig * lockedScaledPrice / targetScaledPrice
 
-    if (convertedAmount <= 0) {
+    if (convertedAmount <= 0n) {
       return NextResponse.json({ error: 'Converted amount is zero' }, { status: 400 })
     }
 
@@ -45,9 +60,12 @@ export async function POST(request: Request) {
     const treasuryPublicKey = treasuryKeypair.publicKey()
 
     // Treasury is the tx source (pays fees). Two operations:
-    // 1. Receiver sends locked asset to Treasury
-    // 2. Treasury sends target asset to Receiver (at oracle rate)
+    // Op 1: Receiver sends locked asset to Treasury
+    // Op 2: Treasury sends target asset to Receiver at oracle rate
     const treasuryAccount = await server.loadAccount(treasuryPublicKey)
+
+    const sendAmountStr = (Number(sendAmountBig) / 10_000_000).toFixed(7)
+    const convertedAmountStr = (Number(convertedAmount) / 10_000_000).toFixed(7)
 
     const swapTx = new StellarSdk.TransactionBuilder(treasuryAccount, {
       fee: StellarSdk.BASE_FEE,
@@ -55,31 +73,32 @@ export async function POST(request: Request) {
     })
       .addOperation(
         StellarSdk.Operation.payment({
-          source: receiverPublicKey, // Receiver is the source of this op
+          source: receiverPublicKey,
           destination: treasuryPublicKey,
           asset: lockedClassicAsset,
-          amount: (Number(sendAmount) / 10_000_000).toFixed(7),
+          amount: sendAmountStr,
         })
       )
       .addOperation(
         StellarSdk.Operation.payment({
-          // Treasury is the default source (tx source)
           destination: receiverPublicKey,
           asset: targetClassicAsset,
-          amount: (convertedAmount / 10_000_000).toFixed(7),
+          amount: convertedAmountStr,
         })
       )
       .setTimeout(300)
       .build()
 
-    // Treasury signs for: tx source + op 2 (payment from treasury)
+    // Treasury signs for: tx source + op 2
     swapTx.sign(treasuryKeypair)
 
     // Return partially-signed XDR — receiver still needs to sign for op 1
     return NextResponse.json({
       xdr: swapTx.toXDR(),
-      convertedAmount: (convertedAmount / 10_000_000).toFixed(7),
-      rate: (lockedPrice / targetPrice).toFixed(6),
+      convertedAmount: convertedAmountStr,
+      lockedPrice: lockedPriceData.scaledPrice,
+      targetPrice: targetPriceData.scaledPrice,
+      rate: (Number(lockedScaledPrice) / Number(targetScaledPrice)).toFixed(6),
     })
   } catch (error) {
     console.error(error)

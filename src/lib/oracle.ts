@@ -1,9 +1,55 @@
 import * as StellarSdk from '@stellar/stellar-sdk'
 
-// Map of asset codes to their Binance trading pair symbols.
-// EURC is pegged to EUR; EURCUSDC doesn't exist on Binance, so we use EURUSDT as proxy.
+// Map of asset codes to their Binance trading pair symbols for generic fallback.
 const BINANCE_SYMBOL_MAP: Record<string, string> = {
   EURC: 'EURUSDT',
+}
+
+// Helpers to fetch prices from individual APIs with caching disabled.
+async function fetchBinancePrice(): Promise<number> {
+  const response = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=EURUSDT', {
+    cache: 'no-store'
+  })
+  if (!response.ok) {
+    throw new Error(`Binance API returned HTTP ${response.status}`)
+  }
+  const data = await response.json()
+  const price = parseFloat(data.price)
+  if (isNaN(price) || price <= 0) {
+    throw new Error(`Invalid Binance price: ${data.price}`)
+  }
+  return price
+}
+
+async function fetchCoinbasePrice(): Promise<number> {
+  const response = await fetch('https://api.coinbase.com/v2/prices/EURC-USDC/spot', {
+    cache: 'no-store'
+  })
+  if (!response.ok) {
+    throw new Error(`Coinbase API returned HTTP ${response.status}`)
+  }
+  const data = await response.json()
+  const price = parseFloat(data.data?.amount)
+  if (isNaN(price) || price <= 0) {
+    throw new Error(`Invalid Coinbase price: ${data.data?.amount}`)
+  }
+  return price
+}
+
+async function fetchKrakenPrice(): Promise<number> {
+  const response = await fetch('https://api.kraken.com/0/public/Ticker?pair=EURCUSDC', {
+    cache: 'no-store'
+  })
+  if (!response.ok) {
+    throw new Error(`Kraken API returned HTTP ${response.status}`)
+  }
+  const data = await response.json()
+  const pairData = data.result?.EURCUSDC || data.result?.EEURCUSDC
+  const price = parseFloat(pairData?.c?.[0])
+  if (isNaN(price) || price <= 0) {
+    throw new Error(`Invalid Kraken price: ${pairData?.c?.[0]}`)
+  }
+  return price
 }
 
 export async function getAttestedPriceData(assetCode: string) {
@@ -11,10 +57,42 @@ export async function getAttestedPriceData(assetCode: string) {
 
   if (assetCode === 'USDC') {
     price = 1.0
+  } else if (assetCode === 'EURC') {
+    console.log('[Oracle] Fetching real-time EURC rates from Coinbase, Binance, and Kraken...')
+    
+    const results = await Promise.allSettled([
+      fetchCoinbasePrice(),
+      fetchBinancePrice(),
+      fetchKrakenPrice()
+    ])
+
+    const validPrices: number[] = []
+    const sources = ['Coinbase', 'Binance', 'Kraken']
+
+    results.forEach((res, index) => {
+      const source = sources[index]
+      if (res.status === 'fulfilled') {
+        validPrices.push(res.value)
+        console.log(`[Oracle] ${source} EURC price: ${res.value}`)
+      } else {
+        console.warn(`[Oracle] ${source} fetch failed:`, res.reason instanceof Error ? res.reason.message : res.reason)
+      }
+    })
+
+    if (validPrices.length === 0) {
+      throw new Error('Failed to fetch EURC price from all sources (Coinbase, Binance, Kraken)')
+    }
+
+    // Average the successful price feeds
+    const sum = validPrices.reduce((a, b) => a + b, 0)
+    price = sum / validPrices.length
+    console.log(`[Oracle] EURC combined index price (avg of ${validPrices.length} source(s)): ${price.toFixed(6)}`)
   } else {
+    // Generic fallback for any other assets using Binance
     const symbol = BINANCE_SYMBOL_MAP[assetCode] || `${assetCode}USDC`
+    console.log(`[Oracle] Fetching fallback price for ${assetCode} (Binance: ${symbol})...`)
     const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, {
-      next: { revalidate: 60 }
+      cache: 'no-store'
     })
     if (!response.ok) {
       throw new Error(`Binance API returned ${response.status} for symbol ${symbol}`)
@@ -24,8 +102,10 @@ export async function getAttestedPriceData(assetCode: string) {
     if (isNaN(price) || price <= 0) {
       throw new Error(`Invalid price received for ${assetCode} (symbol: ${symbol}): ${data.price}`)
     }
+    console.log(`[Oracle] Fallback price for ${assetCode}: ${price}`)
   }
 
+  // Scale the price (7 decimal places logic matching contract expectations)
   const scaledPrice = Math.floor(price * 10_000_000).toString()
   const expirationTimestamp = Math.floor(Date.now() / 1000) + 300
 

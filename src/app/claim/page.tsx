@@ -141,52 +141,38 @@ function ClaimPageContent() {
         throw new Error(submitData.error || 'Claim submission failed')
       }
 
-      // ── Phase 3: Swap via pathPaymentStrictSend (if cross-asset) ────────
-      // Uses Stellar SDEX + AMM pools for multi-hop routing.
+      // ── Phase 3: Treasury conversion (if cross-asset) ───────────────────
+      // Treasury-backed conversion: receiver sends locked asset → treasury,
+      // treasury sends target asset → receiver at live oracle rate.
       if (needsSwap) {
         currentStep++
-        // Calculate principal amount (amount - fee). Fee is ~1% clamped $0.50-$3.00.
-        // For simplicity, swap the full balance the receiver just got.
-        // The contract already deducted the fee, so we use a rough calculation.
-        const rawAmount = Number(vaultData.amount)
-        const scaledPrice = parseInt(buildData.attestationPayload?.scaledPrice || '10000000')
-        // Approximate principal: amount - fee (contract already calculated)
-        // We'll send all received tokens. The exact amount is the principal the contract sent.
-        const feeBase = rawAmount / 100
-        const feeUsdValue = (feeBase * scaledPrice) / 10_000_000
-        let feeAmount: number
-        if (feeUsdValue < 5_000_000) {
-          feeAmount = (5_000_000 * 10_000_000) / scaledPrice
-        } else if (feeUsdValue > 30_000_000) {
-          feeAmount = (30_000_000 * 10_000_000) / scaledPrice
-        } else {
-          feeAmount = feeBase
-        }
-        const principalAmount = Math.floor(rawAmount - feeAmount)
 
-        setStepMessage(`Building swap (${currentStep}/${totalSteps})...`)
+        // Use the EXACT principalAmount from the API (same BigInt math as contract)
+        const principalAmount = buildData.principalAmount
+
+        setStepMessage(`Building conversion (${currentStep}/${totalSteps})...`)
         const swapBuildRes = await fetch('/api/claim/swap', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             receiverPublicKey: publicKey,
-            sendAmount: principalAmount.toString(),
+            sendAmount: principalAmount,
             lockedAssetCode: vaultData.assetCode,
             targetAssetCode: targetAsset,
           }),
         })
         const swapBuildData = await swapBuildRes.json()
         if (!swapBuildRes.ok || swapBuildData.error) {
-          throw new Error(swapBuildData.error || 'Swap build failed')
+          throw new Error(swapBuildData.error || 'Conversion build failed')
         }
 
-        setStepMessage(`Sign swap (${currentStep}/${totalSteps})...`)
+        setStepMessage(`Sign conversion (${currentStep}/${totalSteps})...`)
         const { signedTxXdr: signedSwapXdr } = await StellarWalletsKit.signTransaction(
           swapBuildData.xdr,
           { networkPassphrase: Networks.TESTNET, address: publicKey }
         )
 
-        setStepMessage('Submitting swap to network...')
+        setStepMessage('Submitting conversion to network...')
         const swapSubmitRes = await fetch('/api/claim/swap/submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -194,7 +180,7 @@ function ClaimPageContent() {
         })
         const swapSubmitData = await swapSubmitRes.json()
         if (!swapSubmitRes.ok || swapSubmitData.error) {
-          throw new Error(swapSubmitData.error || 'Swap submission failed')
+          throw new Error(swapSubmitData.error || 'Conversion submission failed')
         }
       }
 
