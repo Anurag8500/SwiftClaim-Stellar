@@ -13,9 +13,10 @@ export default function Navbar() {
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/" className="text-2xl font-bold">
-          <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        <Link href="/" className="flex items-center gap-3 group">
+          <img src="/logo.png" alt="SwiftClaim Logo" className="h-16 w-16 object-contain" />
+          <span className="text-xl font-bold tracking-tight text-white group-hover:text-white/80 transition-colors">
             SwiftClaim
           </span>
         </Link>

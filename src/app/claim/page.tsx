@@ -7,6 +7,50 @@ import { Loader2, CheckCircle } from 'lucide-react'
 import { useWallet } from '@/contexts/WalletContext'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
 import { checkIfGhost, fetchVaultData, ASSETS } from '@/lib/stellar'
+import Navbar from '@/components/layout/Navbar'
+
+function getPreviewBreakdown(
+  amountStroops: number,
+  lockedAssetCode: string,
+  targetAssetCode: string,
+  eurcPrice: number | null
+) {
+  const lockedPrice = lockedAssetCode === 'USDC' ? 1.0 : (eurcPrice || 1.15)
+  const targetPrice = targetAssetCode === 'USDC' ? 1.0 : (eurcPrice || 1.15)
+
+  const rawAmount = amountStroops
+  const originalAmountTokens = rawAmount / 10_000_000
+
+  // 1% base fee
+  const baseFeeTokens = originalAmountTokens * 0.01
+  const feeUsdValue = baseFeeTokens * lockedPrice
+
+  let feeTokens = baseFeeTokens
+  // $0.50 minimum fee
+  if (feeUsdValue < 0.50) {
+    feeTokens = 0.50 / lockedPrice
+  }
+  // $3.00 maximum fee
+  else if (feeUsdValue > 3.00) {
+    feeTokens = 3.00 / lockedPrice
+  }
+
+  const principalTokens = Math.max(0, originalAmountTokens - feeTokens)
+  const exchangeRate = lockedPrice / targetPrice
+  const receivedTokens = principalTokens * exchangeRate
+
+  return {
+    originalAmountTokens,
+    feeTokens,
+    feeAsset: lockedAssetCode,
+    principalTokens,
+    principalAsset: lockedAssetCode,
+    exchangeRate,
+    receivedTokens,
+    receivedAsset: targetAssetCode,
+    needsSwap: lockedAssetCode !== targetAssetCode
+  }
+}
 
 function ClaimPageContent() {
   const searchParams = useSearchParams()
@@ -22,8 +66,34 @@ function ClaimPageContent() {
   const [stepMessage, setStepMessage] = useState('Processing Secure Claim...')
   const [success, setSuccess] = useState(false)
   const [targetAsset, setTargetAsset] = useState('USDC')
+  const [finalReceivedAmount, setFinalReceivedAmount] = useState<string | null>(null)
+  const [eurcPrice, setEurcPrice] = useState<number | null>(null)
 
   const targetAssetData = ASSETS[targetAsset as keyof typeof ASSETS]
+
+  useEffect(() => {
+    let active = true
+    fetch('/api/price?asset=EURC')
+      .then(res => res.json())
+      .then(data => {
+        if (active && data.price) {
+          setEurcPrice(data.price)
+        }
+      })
+      .catch(err => console.error('Failed to fetch EURC price for preview:', err))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const breakdown = vaultData
+    ? getPreviewBreakdown(
+        parseFloat(vaultData.amount),
+        vaultData.assetCode,
+        targetAsset,
+        eurcPrice
+      )
+    : null
 
   useEffect(() => {
     async function loadVaultData() {
@@ -124,6 +194,10 @@ function ClaimPageContent() {
         throw new Error(buildData.error || 'Claim build failed')
       }
 
+      if (!needsSwap) {
+        setFinalReceivedAmount((parseFloat(buildData.principalAmount) / 10_000_000).toString())
+      }
+
       setStepMessage(`Sign claim (${currentStep}/${totalSteps})...`)
       const { signedTxXdr: signedClaimXdr } = await StellarWalletsKit.signTransaction(
         buildData.xdr,
@@ -165,6 +239,8 @@ function ClaimPageContent() {
         if (!swapBuildRes.ok || swapBuildData.error) {
           throw new Error(swapBuildData.error || 'Conversion build failed')
         }
+
+        setFinalReceivedAmount(swapBuildData.convertedAmount)
 
         setStepMessage(`Sign conversion (${currentStep}/${totalSteps})...`)
         const { signedTxXdr: signedSwapXdr } = await StellarWalletsKit.signTransaction(
@@ -231,13 +307,42 @@ function ClaimPageContent() {
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
         <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 backdrop-blur-sm text-center">
           <CheckCircle className="mx-auto h-16 w-16 text-green-400" />
-          <h1 className="mt-4 text-2xl font-bold text-zinc-50">Transaction Settled.</h1>
+          <h1 className="mt-4 text-2xl font-bold text-zinc-50">Transaction Settled</h1>
           <p className="mt-2 text-zinc-400">
-            Your wallet has been permanently activated. You now hold ${parseFloat(vaultData.amount).toFixed(2)} {targetAssetData.code} .
+            Funds claimed and transferred successfully.
           </p>
+          
+          <div className="my-6 rounded-2xl bg-zinc-950/40 p-5 border border-zinc-800/80 text-left w-full space-y-4">
+            <div className="text-center">
+              <span className="text-xs text-zinc-500 uppercase tracking-widest font-semibold block mb-1">Claimed Amount</span>
+              <span className="text-3xl font-black text-green-400 font-mono">
+                {parseFloat(finalReceivedAmount || '0').toFixed(4)} {targetAssetData.code}
+              </span>
+            </div>
+            
+            {breakdown && (
+              <div className="pt-3 border-t border-zinc-800/80 text-xs text-zinc-450 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Vault Value:</span>
+                  <span className="font-mono text-zinc-300">{breakdown.originalAmountTokens.toFixed(2)} {vaultData.assetCode}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Sponsoring Fee:</span>
+                  <span className="font-mono text-red-400">-{breakdown.feeTokens.toFixed(4)} {breakdown.feeAsset}</span>
+                </div>
+                {breakdown.needsSwap && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Oracle Swap Rate:</span>
+                    <span className="font-mono text-blue-400">1 {vaultData.assetCode} = {breakdown.exchangeRate.toFixed(4)} {targetAssetData.code}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => router.push('/dashboard')}
-            className="mt-8 w-full rounded-2xl bg-blue-500 px-8 py-4 text-lg font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-400 transition-colors"
+            className="w-full rounded-2xl bg-blue-500 px-8 py-4 text-lg font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-400 transition-colors"
           >
             Go to Dashboard
           </button>
@@ -256,7 +361,7 @@ function ClaimPageContent() {
             animate={{ opacity: 1, y: 0 }}
             className="text-3xl font-bold"
           >
-            <span className="text-green-400">${parseFloat(vaultData.amount).toFixed(2)} {vaultData.assetCode}</span> waiting.
+            <span className="text-green-400">{(parseFloat(vaultData.amount) / 10_000_000).toFixed(2)} {vaultData.assetCode}</span> waiting.
           </motion.h1>
 
           <p className="mt-2 text-zinc-400">Securely locked in SwiftClaim Vault.</p>
@@ -277,6 +382,57 @@ function ClaimPageContent() {
               ))}
             </select>
           </div>
+
+          {breakdown && (
+            <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-5 text-left space-y-3">
+              <div className="flex justify-between items-center pb-2 border-b border-zinc-800/60">
+                <span className="text-sm font-semibold text-zinc-200">Claim Details & Fees</span>
+                <span className="text-xs text-blue-400 font-mono">Real-Time Oracle</span>
+              </div>
+              
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-400">Locked Vault Amount:</span>
+                <span className="font-mono text-zinc-100 font-medium">
+                  {breakdown.originalAmountTokens.toFixed(2)} {vaultData.assetCode}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-400 flex items-center gap-1">
+                  Secure Sponsoring Fee:
+                  <span className="text-xs text-zinc-500">(1% or $0.50 min)</span>
+                </span>
+                <span className="font-mono text-red-400 font-medium">
+                  -{breakdown.feeTokens.toFixed(4)} {breakdown.feeAsset}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-400">Net Principal:</span>
+                <span className="font-mono text-zinc-100 font-medium">
+                  {breakdown.principalTokens.toFixed(4)} {breakdown.principalAsset}
+                </span>
+              </div>
+
+              {breakdown.needsSwap && (
+                <>
+                  <div className="flex justify-between text-sm border-t border-dashed border-zinc-800/80 pt-2">
+                    <span className="text-zinc-400">Conversion Rate:</span>
+                    <span className="font-mono text-blue-400 font-medium">
+                      1 {vaultData.assetCode} = {breakdown.exchangeRate.toFixed(4)} {targetAssetData.code}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              <div className="flex justify-between text-base font-bold border-t border-zinc-800 pt-3 mt-1">
+                <span className="text-zinc-50">Estimated Received:</span>
+                <span className="font-mono text-green-400 font-extrabold">
+                  {breakdown.receivedTokens.toFixed(4)} {targetAssetData.code}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="mt-8 space-y-4">
             {!isConnected ? (
@@ -327,15 +483,20 @@ function ClaimPageContent() {
 
 export default function ClaimPage() {
   return (
-    <Suspense fallback={
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
-        <div className="flex items-center gap-3 text-zinc-400">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span>Loading...</span>
-        </div>
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
+      <Navbar />
+      <div className="flex-1">
+        <Suspense fallback={
+          <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
+            <div className="flex items-center gap-3 text-zinc-400">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              <span>Loading...</span>
+            </div>
+          </div>
+        }>
+          <ClaimPageContent />
+        </Suspense>
       </div>
-    }>
-      <ClaimPageContent />
-    </Suspense>
+    </div>
   )
 }
