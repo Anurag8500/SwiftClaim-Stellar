@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
-import { Loader2, Copy, Check } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { Loader2, Copy, Check, ShieldCheck, X } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useWallet } from '@/contexts/WalletContext'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
 import * as StellarSdk from '@stellar/stellar-sdk'
@@ -35,6 +36,11 @@ export default function GenerateLink({
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { isConnected, publicKey: userPublicKey, connectWallet } = useWallet()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
 
   const selectedAssetData = ASSETS[selectedAsset as keyof typeof ASSETS]
   const estimatedFiatValue = parseFloat(amount) || 0
@@ -183,30 +189,109 @@ export default function GenerateLink({
         )}
       </motion.button>
 
-      {link && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Your SwiftLink:</span>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1 text-sm text-orange-500 hover:text-orange-400"
-            >
-              {copied ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <p className="mt-2 break-all text-sm font-mono text-zinc-300">
-            {link}
-          </p>
-        </motion.div>
+      {mounted && typeof window !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {link && (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setLink('')}
+                className="absolute inset-0 bg-black/85 backdrop-blur-2xl"
+              />
+              
+              {/* Modal Content */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                transition={{ type: 'spring', duration: 0.5 }}
+                className="relative w-full max-w-xl rounded-3xl border border-orange-500/20 bg-[#0d0d0e]/95 p-8 md:p-10 shadow-[0_20px_50px_rgba(250,100,0,0.18)] backdrop-blur-xl overflow-hidden text-center space-y-6 z-10"
+              >
+                {/* Top-Right Close Button */}
+                <button
+                  type="button"
+                  onClick={() => setLink('')}
+                  className="absolute top-5 right-5 p-2 rounded-xl text-zinc-500 hover:text-white hover:bg-zinc-900 transition-all cursor-pointer z-20"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+
+                {/* Top glow accent */}
+                <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
+                
+                {/* Header & Icon */}
+                <div className="flex flex-col items-center gap-2">
+                  <div className="p-4 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <ShieldCheck className="h-10 w-10" />
+                  </div>
+                  <h3 className="text-2xl font-black text-white tracking-tight">
+                    SwiftLink Secured
+                  </h3>
+                  <p className="text-sm text-zinc-400 max-w-md leading-relaxed mx-auto">
+                    Funds are locked in the escrow contract and only the designated recipient wallet can unlock them.
+                  </p>
+                </div>
+
+                {/* Value Badge Details */}
+                <div className="bg-[#070708]/60 border border-zinc-900 rounded-2xl p-5 flex flex-col items-center justify-center gap-2">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Locked Principal</span>
+                  <span className="text-3xl font-black text-orange-400 font-mono tracking-tight">
+                    {parseFloat(amount).toFixed(2)} {selectedAssetData.code}
+                  </span>
+                  <div className="text-xs text-zinc-450 font-mono border-t border-zinc-900/60 w-full pt-3 mt-1 flex justify-between px-2">
+                    <span className="text-zinc-500">For Recipient:</span>
+                    <span className="text-zinc-350">{receiverPublicKey}</span>
+                  </div>
+                </div>
+
+                {/* Copy Area */}
+                <div className="space-y-2 text-left">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">
+                    SwiftLink URL
+                  </label>
+                  <div className="flex flex-col sm:flex-row items-center gap-3">
+                    <div className="w-full rounded-2xl border border-zinc-800 bg-[#070708]/80 px-4 py-3.5 font-mono text-xs text-zinc-300 break-all select-all flex-1 text-center sm:text-left select-none">
+                      {link}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-2xl bg-white text-black font-bold text-sm px-6 py-3.5 hover:bg-zinc-200 active:scale-95 transition-all shadow-md shrink-0 cursor-pointer"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="h-4 w-4 text-emerald-600 stroke-[3px]" />
+                          <span className="text-emerald-700 font-extrabold">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4" />
+                          <span>Copy Link</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Close Button */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setLink('')}
+                    className="w-full rounded-2xl bg-zinc-900 border border-zinc-850 hover:bg-zinc-800 px-6 py-4 font-bold text-sm text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
+                  >
+                    Done
+                  </button>
+                </div>
+
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
       )}
     </div>
   )

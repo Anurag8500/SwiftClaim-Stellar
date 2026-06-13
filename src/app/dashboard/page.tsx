@@ -2,17 +2,17 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { 
-  ArrowRight, 
-  Wallet, 
-  HelpCircle, 
-  Lock, 
-  Link as LinkIcon, 
-  CheckCircle2, 
-  AlertCircle, 
-  Loader2, 
-  TrendingUp, 
-  ShieldCheck, 
+import {
+  ArrowRight,
+  Wallet,
+  HelpCircle,
+  Lock,
+  Link as LinkIcon,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  TrendingUp,
+  ShieldCheck,
   ChevronRight,
   Info,
   Layers
@@ -52,7 +52,7 @@ export default function DashboardPage() {
         console.error('Error fetching EURC price:', err)
       }
     }
-    
+
     fetchEurcPrice()
     const interval = setInterval(fetchEurcPrice, 30000)
     return () => {
@@ -115,13 +115,13 @@ export default function DashboardPage() {
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.6, ease: 'easeOut' }}
       className="relative min-h-screen bg-[#050505] text-zinc-100 flex flex-col font-sans select-none overflow-x-hidden"
     >
-      
+
       {/* Self-contained keyframes and styles */}
       <style>{`
         @keyframes routeDash {
@@ -149,8 +149,8 @@ export default function DashboardPage() {
       `}</style>
 
       {/* Background Image Mesh */}
-      <div 
-        className="absolute inset-0 bg-[url('/dashboard-bg.jpg')] bg-cover bg-center opacity-[0.06] pointer-events-none z-0 mix-blend-screen" 
+      <div
+        className="absolute inset-0 bg-[url('/dashboard-bg.jpg')] bg-cover bg-center opacity-[0.06] pointer-events-none z-0 mix-blend-screen"
       />
 
       {/* Floating Ambient Gradients */}
@@ -171,7 +171,7 @@ export default function DashboardPage() {
           {/* Connected Wallet Capsule */}
           <div>
             {isConnected && userPublicKey ? (
-              <motion.button 
+              <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={disconnectWallet}
@@ -181,7 +181,7 @@ export default function DashboardPage() {
                 {truncateAddress(userPublicKey)}
               </motion.button>
             ) : (
-              <motion.button 
+              <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={connectWallet}
@@ -196,7 +196,7 @@ export default function DashboardPage() {
 
       {/* Main Container */}
       <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-6 lg:px-8 py-12 flex flex-col gap-10">
-        
+
         {/* Main Hero Header */}
         <div className="text-center md:text-left space-y-4 max-w-3xl">
           <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white leading-tight">
@@ -210,13 +210,13 @@ export default function DashboardPage() {
 
         {/* Dashboard Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
+
           {/* LEFT SIDE: Inputs & Route Visualizer (Col 1 to 7) */}
           <div className="lg:col-span-7 space-y-8">
-            
+
             {/* Input Panel Card */}
             <div className="rounded-3xl border border-zinc-900 bg-[#0d0d0e]/60 p-6 md:p-8 backdrop-blur-xl space-y-6">
-              
+
               {/* Destination Public Key */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
@@ -243,7 +243,7 @@ export default function DashboardPage() {
 
               {/* Asset and Amount Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
+
                 {/* Asset Selector */}
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -261,7 +261,7 @@ export default function DashboardPage() {
                       </span>
                       <ChevronRight className={`h-4 w-4 text-zinc-400 transition-transform ${isAssetDropdownOpen ? 'rotate-90' : ''}`} />
                     </button>
-                    
+
                     <AnimatePresence>
                       {isAssetDropdownOpen && (
                         <motion.div
@@ -278,9 +278,8 @@ export default function DashboardPage() {
                                 setSelectedAsset(key)
                                 setIsAssetDropdownOpen(false)
                               }}
-                              className={`w-full flex items-center justify-between rounded-xl px-3 py-3 text-sm font-medium transition-all ${
-                                selectedAsset === key ? 'bg-orange-500/10 text-white border border-orange-500/20' : 'text-zinc-400 hover:bg-zinc-900/50 hover:text-white border border-transparent'
-                              }`}
+                              className={`w-full flex items-center justify-between rounded-xl px-3 py-3 text-sm font-medium transition-all ${selectedAsset === key ? 'bg-orange-500/10 text-white border border-orange-500/20' : 'text-zinc-400 hover:bg-zinc-900/50 hover:text-white border border-transparent'
+                                }`}
                             >
                               <span className="flex items-center gap-2">
                                 <span className={`h-2 w-2 rounded-full ${key === 'USDC' ? 'bg-blue-500' : 'bg-orange-500'}`} />
@@ -332,16 +331,16 @@ export default function DashboardPage() {
                   </button>
                 ) : isValidAddress && isGhost !== null ? (
                   isGhost ? (
-                    <GenerateLink 
-                      receiverPublicKey={destinationPublicKey} 
+                    <GenerateLink
+                      receiverPublicKey={destinationPublicKey}
                       amount={amount}
                       setAmount={setAmount}
                       selectedAsset={selectedAsset}
                       setSelectedAsset={setSelectedAsset}
                     />
                   ) : (
-                    <VeteranSend 
-                      receiverPublicKey={destinationPublicKey} 
+                    <VeteranSend
+                      receiverPublicKey={destinationPublicKey}
                       amount={amount}
                       setAmount={setAmount}
                       selectedAsset={selectedAsset}
@@ -381,8 +380,8 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <p className="text-sm text-zinc-400 leading-relaxed">
-                        The recipient does not have an active wallet on the Stellar network. 
-                        SwiftClaim automatically routes this to the secure <strong className="text-zinc-200">SwiftClaim Vault</strong>. 
+                        The recipient does not have an active wallet on the Stellar network.
+                        SwiftClaim automatically routes this to the secure <strong className="text-zinc-200">SwiftClaim Vault</strong>.
                         A claimable link will be created for the recipient.
                       </p>
                       <div className="flex items-center gap-2 text-xs font-semibold text-orange-500 bg-orange-500/5 px-3.5 py-2 rounded-xl border border-orange-500/10 w-fit">
@@ -403,7 +402,7 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <p className="text-sm text-zinc-400 leading-relaxed">
-                        The recipient public key points to an active Stellar account. 
+                        The recipient public key points to an active Stellar account.
                         Funds can be routed directly and instantly.
                       </p>
                       <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-500/5 px-3.5 py-2 rounded-xl border border-emerald-500/10 w-fit">
@@ -418,7 +417,7 @@ export default function DashboardPage() {
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
                       Live Delivery Route Visualization
                     </h4>
-                    
+
                     {isGhost ? (
                       /* Ghost Wallet: Balanced 4-node flow */
                       <div className="relative flex flex-col md:flex-row items-center justify-between gap-6 md:gap-4 py-4 px-2">
@@ -548,7 +547,7 @@ export default function DashboardPage() {
               )}
 
               {!isValidAddress && !isChecking && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   className="rounded-3xl border border-zinc-900/50 bg-[#0d0d0e]/30 p-8 text-center text-zinc-500 flex flex-col items-center gap-3 py-16"
@@ -564,7 +563,7 @@ export default function DashboardPage() {
           {/* RIGHT SIDE: Live Preview Panel (Col 8 to 12) */}
           <div className="lg:col-span-5">
             <div className="rounded-3xl border border-zinc-900 bg-[#0d0d0e]/80 p-6 md:p-8 backdrop-blur-xl space-y-6 sticky top-28 shadow-2xl">
-              
+
               <div className="flex justify-between items-center pb-4 border-b border-zinc-900/60">
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-orange-500" />
@@ -580,7 +579,7 @@ export default function DashboardPage() {
               <div className="bg-[#09090a] border border-orange-500/20 rounded-2xl p-6 text-center relative overflow-hidden shadow-[0_4px_30px_rgba(250,100,0,0.05)]">
                 {/* Accent glow line at top */}
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
-                
+
                 {isGhost ? (
                   <>
                     <span className="text-[10px] font-bold text-orange-500 uppercase tracking-widest block mb-1">You Send</span>
@@ -643,7 +642,7 @@ export default function DashboardPage() {
 
               {/* Route analysis details */}
               <div className="space-y-3 pt-2 text-xs">
-                
+
                 {/* Asset */}
                 <div className="flex justify-between items-center py-1">
                   <span className="font-semibold text-zinc-500 uppercase tracking-wider">Asset Selected</span>
