@@ -8,7 +8,7 @@ export default function Navbar() {
   const { isConnected, publicKey, connectWallet, disconnectWallet } = useWallet()
 
   const truncatePublicKey = (pk: string) => {
-    return `${pk.slice(0, 4)}...${pk.slice(-4)}`
+    return `${pk.slice(0, 6)}...${pk.slice(-6)}`
   }
 
   return (

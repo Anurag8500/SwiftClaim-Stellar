@@ -83,12 +83,10 @@ export async function getAttestedPriceData(assetCode: string) {
       throw new Error('Failed to fetch EURC price from all sources (Coinbase, Binance, Kraken)')
     }
 
-    // Average the successful price feeds
     const sum = validPrices.reduce((a, b) => a + b, 0)
     price = sum / validPrices.length
     console.log(`[Oracle] EURC combined index price (avg of ${validPrices.length} source(s)): ${price.toFixed(6)}`)
   } else {
-    // Generic fallback for any other assets using Binance
     const symbol = BINANCE_SYMBOL_MAP[assetCode] || `${assetCode}USDC`
     console.log(`[Oracle] Fetching fallback price for ${assetCode} (Binance: ${symbol})...`)
     const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, {
@@ -105,7 +103,6 @@ export async function getAttestedPriceData(assetCode: string) {
     console.log(`[Oracle] Fallback price for ${assetCode}: ${price}`)
   }
 
-  // Scale the price (7 decimal places logic matching contract expectations)
   const scaledPrice = Math.floor(price * 10_000_000).toString()
   const expirationTimestamp = Math.floor(Date.now() / 1000) + 300
 
@@ -120,30 +117,36 @@ export function signPriceData(assetCode: string, scaledPrice: string, expiration
 
   const keypair = StellarSdk.Keypair.fromSecret(oracleSecret)
 
-  // Construct raw buffers in exact order using modern APIs
   const encoder = new TextEncoder()
+
+  // Domain separator — MUST match DOMAIN_SEPARATOR in contracts/swiftvault/src/lib.rs
+  const DOMAIN_SEPARATOR = 'SwiftClaim:OracleAttestation:v1:'
+  const domainBytes = encoder.encode(DOMAIN_SEPARATOR)
+
   const assetBytes = encoder.encode(assetCode)
 
-  // 16-byte buffer for scaled_price (i128), write to lower 8 bytes as Big-Endian
+  // 16-byte buffer for scaled_price (i128), written to bytes 8–15 as big-endian i64.
+  // Bytes 0–7 remain 0x00 (high bits of i128, zero for normal prices).
   const priceBuffer = new Uint8Array(16)
   const priceView = new DataView(priceBuffer.buffer)
-  priceView.setBigInt64(8, BigInt(scaledPrice), false) // Big-Endian
+  priceView.setBigInt64(8, BigInt(scaledPrice), false) // offset 8, big-endian
 
-  // 8-byte buffer for expiration_timestamp (u64) as Big-Endian
+  // 8-byte buffer for expiration_timestamp (u64) as big-endian
   const timeBuffer = new Uint8Array(8)
   const timeView = new DataView(timeBuffer.buffer)
-  timeView.setBigUint64(0, BigInt(expirationTimestamp), false) // Big-Endian
+  timeView.setBigUint64(0, BigInt(expirationTimestamp), false)
 
-  // Concatenate all buffers
-  const combinedBuffer = new Uint8Array(assetBytes.length + priceBuffer.length + timeBuffer.length)
-  combinedBuffer.set(assetBytes, 0)
-  combinedBuffer.set(priceBuffer, assetBytes.length)
-  combinedBuffer.set(timeBuffer, assetBytes.length + priceBuffer.length)
+  // Concatenate: domain || asset_code || scaled_price(16B) || expiration(8B)
+  const combinedBuffer = new Uint8Array(
+    domainBytes.length + assetBytes.length + priceBuffer.length + timeBuffer.length
+  )
+  combinedBuffer.set(domainBytes, 0)
+  combinedBuffer.set(assetBytes, domainBytes.length)
+  combinedBuffer.set(priceBuffer, domainBytes.length + assetBytes.length)
+  combinedBuffer.set(timeBuffer, domainBytes.length + assetBytes.length + priceBuffer.length)
 
-  // Sign raw buffer — keypair.sign accepts Buffer or Uint8Array
   const signatureRaw = keypair.sign(Buffer.from(combinedBuffer))
 
-  // Convert signature to hex string
   const signature = Array.from(signatureRaw)
     .map((b: number) => b.toString(16).padStart(2, '0'))
     .join('')

@@ -3,45 +3,43 @@ import * as StellarSdk from '@stellar/stellar-sdk'
 import { server, ASSETS } from '@/lib/stellar'
 import { getTreasuryKeypair } from '@/lib/treasury'
 
+/**
+ * Wallet Activation — Build
+ * 
+ * Creates the ghost wallet on the Stellar ledger and adds trustlines for all
+ * unique assets in the receiver's deposits.
+ * 
+ * Treasury sponsors the account reserve so no XLM is needed.
+ * Operations: beginSponsoring → createAccount → changeTrust(s) → endSponsoring
+ */
 export async function POST(request: Request) {
   try {
-    const { receiverPublicKey, targetAsset, lockedAssetContractId } = await request.json()
+    const { receiverPublicKey, assetContractIds } = await request.json()
 
     const treasuryKeypair = getTreasuryKeypair()
-    const treasuryPublicKey = treasuryKeypair.publicKey()
-    const sourceAccount = await server.loadAccount(treasuryPublicKey)
+    const sourceAccount = await server.loadAccount(treasuryKeypair.publicKey())
 
-    // Resolve classic assets from contract IDs
-    function resolveClassicAsset(contractId: string): { asset: StellarSdk.Asset; code: string } | null {
+    // Resolve classic assets from contract IDs (for changeTrust operations)
+    function resolveClassicAsset(contractId: string): StellarSdk.Asset | null {
       for (const [, assetInfo] of Object.entries(ASSETS)) {
-        if (assetInfo.contractId === contractId) {
-          return {
-            asset: new StellarSdk.Asset(assetInfo.code, assetInfo.issuer!),
-            code: assetInfo.code,
-          }
+        if (assetInfo.contractId === contractId && assetInfo.code !== 'XLM') {
+          return new StellarSdk.Asset(assetInfo.code, assetInfo.issuer!)
         }
       }
       return null
     }
 
-    const targetAssetInfo = resolveClassicAsset(targetAsset)
-    const lockedAssetInfo = lockedAssetContractId ? resolveClassicAsset(lockedAssetContractId) : null
-
-    // Collect unique trustlines needed (locked asset + target asset, deduplicated)
+    // Collect unique trustlines from all provided contract IDs
     const trustlines: StellarSdk.Asset[] = []
-    if (lockedAssetInfo && lockedAssetInfo.code !== 'XLM') {
-      trustlines.push(lockedAssetInfo.asset)
-    }
-    if (targetAssetInfo && targetAssetInfo.code !== 'XLM') {
-      // Only add if different from locked asset
-      if (!lockedAssetInfo || targetAssetInfo.code !== lockedAssetInfo.code) {
-        trustlines.push(targetAssetInfo.asset)
+    const seen = new Set<string>()
+    for (const contractId of (assetContractIds || [])) {
+      const classicAsset = resolveClassicAsset(contractId)
+      if (classicAsset && !seen.has(classicAsset.code)) {
+        trustlines.push(classicAsset)
+        seen.add(classicAsset.code)
       }
     }
 
-    // Build classic activation tx:
-    // beginSponsoring → createAccount → changeTrust(s) → endSponsoring
-    // Treasury is the source (sponsor), receiver co-signs client-side.
     const txBuilder = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
       networkPassphrase: StellarSdk.Networks.TESTNET,
@@ -58,7 +56,7 @@ export async function POST(request: Request) {
         })
       )
 
-    // Add trustline for each asset (locked + target if different)
+    // Add trustlines for each unique asset
     for (const classicAsset of trustlines) {
       txBuilder.addOperation(
         StellarSdk.Operation.changeTrust({

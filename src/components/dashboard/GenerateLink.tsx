@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useWallet } from '@/contexts/WalletContext'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
 import * as StellarSdk from '@stellar/stellar-sdk'
-import { ASSETS, server, submitToNetwork } from '@/lib/stellar'
+import { ASSETS, isValidPublicKey } from '@/lib/stellar'
 
 interface GenerateLinkProps {
   receiverPublicKey: string
@@ -55,12 +55,8 @@ export default function GenerateLink({
         setIsLoading(false)
         return
       }
-      if (
-        !receiverPublicKey ||
-        receiverPublicKey.length !== 56 ||
-        !receiverPublicKey.startsWith('G')
-      ) {
-        alert('Please enter a valid 56-character Stellar public key starting with G')
+      if (!receiverPublicKey || !isValidPublicKey(receiverPublicKey)) {
+        alert('Please enter a valid Stellar public key (G...)')
         setIsLoading(false)
         return
       }
@@ -77,6 +73,7 @@ export default function GenerateLink({
           senderPublicKey: userPublicKey,
           receiverPublicKey,
           assetAddress: selectedAssetData.contractId,
+          assetCode: selectedAsset,
           amount,
         }),
       })

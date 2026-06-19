@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import GenerateLink from '@/components/dashboard/GenerateLink'
 import VeteranSend from '@/components/dashboard/VeteranSend'
-import { checkIfGhost, ASSETS } from '@/lib/stellar'
+import { checkIfGhost, ASSETS, isValidPublicKey } from '@/lib/stellar'
 import Navbar from '@/components/layout/Navbar'
 import { useWallet } from '@/contexts/WalletContext'
 import Link from 'next/link'
@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const [amount, setAmount] = useState('50')
   const [selectedAsset, setSelectedAsset] = useState('USDC')
   const [isAssetDropdownOpen, setIsAssetDropdownOpen] = useState(false)
-  const [eurcPrice, setEurcPrice] = useState<number>(1.08)
+  const [eurcPrice, setEurcPrice] = useState<number | null>(null)
 
   // Fetch live EURC price only when EURC is selected
   useEffect(() => {
@@ -64,14 +64,15 @@ export default function DashboardPage() {
   // Live route detection logic
   useEffect(() => {
     async function checkGhostStatus() {
-      if (destinationPublicKey.length === 56 && destinationPublicKey.startsWith('G')) {
+      if (isValidPublicKey(destinationPublicKey)) {
         setIsChecking(true)
+        setIsGhost(null)
         try {
           const ghost = await checkIfGhost(destinationPublicKey)
           setIsGhost(ghost)
         } catch (error) {
           console.error('Error checking ghost status:', error)
-          setIsGhost(true) // Fallback to ghost/escrow if error
+          setIsGhost(null) // Do NOT default to ghost on network error
         } finally {
           setIsChecking(false)
         }
@@ -82,17 +83,18 @@ export default function DashboardPage() {
     checkGhostStatus()
   }, [destinationPublicKey])
 
-  const isValidAddress = destinationPublicKey.length === 56 && destinationPublicKey.startsWith('G')
+  const isValidAddress = isValidPublicKey(destinationPublicKey)
 
   // Live calculations for Preview Panel
   const assetData = ASSETS[selectedAsset as keyof typeof ASSETS]
-  const assetPrice = selectedAsset === 'USDC' ? 1.0 : eurcPrice
+  // eurcPrice may be null while loading — use null-coalescing to keep math safe
+  const assetPrice = selectedAsset === 'USDC' ? 1.0 : (eurcPrice ?? null)
   const numAmount = parseFloat(amount) || 0
-  const amountInUsd = numAmount * assetPrice
+  const amountInUsd = assetPrice !== null ? numAmount * assetPrice : 0
 
   // Fee Calculation:
   // Active Route (Direct): Flat 0.001 USDC equivalent (Paid by Sender)
-  // Vault Route (SwiftLink): 1% claim fee (Min $0.50, Max $3.00 USD value) deducted from Recipient upon claim (0 fee for Sender).
+  // Vault Route (SwiftLink): 1% claim fee (Min $0.50, Max $3.00 USD value) deducted from Recipient upon claim.
   let senderFeeInUsd = 0
   let recipientFeeInUsd = 0
 
@@ -104,8 +106,8 @@ export default function DashboardPage() {
     }
   }
 
-  const senderFeeInToken = senderFeeInUsd / assetPrice
-  const recipientFeeInToken = recipientFeeInUsd / assetPrice
+  const senderFeeInToken = assetPrice !== null && assetPrice > 0 ? senderFeeInUsd / assetPrice : 0
+  const recipientFeeInToken = assetPrice !== null && assetPrice > 0 ? recipientFeeInUsd / assetPrice : 0
 
   const totalDeductedFromSender = numAmount + senderFeeInToken
   const totalReceivedByRecipient = numAmount - recipientFeeInToken
@@ -681,7 +683,9 @@ export default function DashboardPage() {
                 {selectedAsset === 'EURC' && (
                   <div className="flex justify-between items-center border-t border-zinc-900/60 pt-3">
                     <span className="font-semibold text-zinc-500 uppercase tracking-wider">EURC/USDC Rate</span>
-                    <span className="font-bold text-white font-mono">1 EURC ≈ ${eurcPrice.toFixed(4)} USDC</span>
+                    <span className="font-bold text-white font-mono">
+                      {eurcPrice !== null ? `1 EURC ≈ $${eurcPrice.toFixed(4)} USDC` : 'Loading...'}
+                    </span>
                   </div>
                 )}
 

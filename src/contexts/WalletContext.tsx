@@ -2,10 +2,10 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit'
-import { FreighterModule, FREIGHTER_ID } from '@creit.tech/stellar-wallets-kit/modules/freighter'
-import { AlbedoModule, ALBEDO_ID } from '@creit.tech/stellar-wallets-kit/modules/albedo'
-import { xBullModule, XBULL_ID } from '@creit.tech/stellar-wallets-kit/modules/xbull'
-import { LobstrModule, LOBSTR_ID } from '@creit.tech/stellar-wallets-kit/modules/lobstr'
+import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter'
+import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo'
+import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull'
+import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr'
 
 interface WalletContextType {
   isConnected: boolean
@@ -17,6 +17,8 @@ interface WalletContextType {
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
+
+const STORAGE_KEY = 'stellar-wallet-connected'
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
@@ -34,7 +36,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       network: Networks.TESTNET,
     })
 
-    const savedWallet = localStorage.getItem('stellar-wallet-connected')
+    // Restore session from localStorage.
+    // We load the saved key but defer to the user to confirm if signing fails —
+    // the wallet extension may have been locked/disconnected since last session.
+    const savedWallet = localStorage.getItem(STORAGE_KEY)
     if (savedWallet) {
       setPublicKey(savedWallet)
       setIsConnected(true)
@@ -46,9 +51,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const { address } = await StellarWalletsKit.authModal()
       setPublicKey(address)
       setIsConnected(true)
-      localStorage.setItem('stellar-wallet-connected', address)
+      localStorage.setItem(STORAGE_KEY, address)
     } catch (error) {
       console.error('Failed to connect wallet:', error)
+      // If the connect itself fails (e.g. user dismissed the modal), clear any
+      // stale state so the next click opens the modal fresh.
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      if (
+        errorMsg.includes('rejected') ||
+        errorMsg.includes('cancelled') ||
+        errorMsg.includes('denied')
+      ) {
+        // User explicitly dismissed — don't clear localStorage
+        return
+      }
+      // Unknown error: clear stale state
+      disconnectWallet()
     }
   }
 
@@ -56,7 +74,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setPublicKey(null)
     setIsConnected(false)
     setIsGhost(null)
-    localStorage.removeItem('stellar-wallet-connected')
+    localStorage.removeItem(STORAGE_KEY)
   }
 
   return (

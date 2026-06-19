@@ -9,59 +9,45 @@ export async function submitToNetwork(transaction: StellarSdk.Transaction) {
   return await server.submitTransaction(transaction)
 }
 
+/**
+ * Checks if a Stellar public key belongs to a ghost (non-existent / unactivated) wallet.
+ * Throws on network errors instead of silently defaulting to true — prevents misrouting funds.
+ */
 export async function checkIfGhost(publicKey: string): Promise<boolean> {
   try {
     await server.loadAccount(publicKey)
     return false
   } catch (error: unknown) {
-    // Horizon throws NotFoundError when account doesn't exist
-    // The error message is "Not Found" and/or response.status is 404
     const err = error as Record<string, unknown>
     if (
       (error instanceof Error && (error.message.includes('Not Found') || error.message.includes('404'))) ||
       (err?.response && (err.response as Record<string, unknown>)?.status === 404) ||
       (typeof err?.status === 'number' && err.status === 404)
     ) {
-      return true
+      return true // Account genuinely does not exist
     }
+    // Do NOT default to true on unexpected errors — propagate so caller can show an error
     console.error('Unexpected error checking ghost status:', error)
-    return true // Treat as ghost by default if there's an error
+    throw new Error(
+      'Unable to determine account status. Check your network connection and try again.'
+    )
   }
 }
 
-export const TESTNET_USDC = StellarSdk.Asset.native()
-
-export async function fetchVaultData(vaultId: string) {
-  const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
-    new StellarSdk.xdr.LedgerKeyContractData({
-      contract: new StellarSdk.Address(SWIFTVAULT_CONTRACT_ID).toScAddress(),
-      key: new StellarSdk.Address(vaultId).toScVal(),
-      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
-    })
-  )
-
-  const entries = await sorobanServer.getLedgerEntries(ledgerKey)
-
-  if (entries.entries.length === 0) {
-    throw new Error('Vault not found')
+/**
+ * Validates a Stellar public key using the actual Ed25519 checksum,
+ * not just length/prefix heuristics.
+ */
+export function isValidPublicKey(key: string): boolean {
+  try {
+    StellarSdk.Keypair.fromPublicKey(key)
+    return true
+  } catch {
+    return false
   }
-
-  const record = StellarSdk.scValToNative(entries.entries[0].val.contractData().val()) as any
-  const amount = record.amount.toString()
-  const assetAddress = record.asset.toString()
-  let assetCode = 'USDC'
-  
-  for (const [key, asset] of Object.entries(ASSETS)) {
-    if (asset.contractId === assetAddress) {
-      assetCode = asset.code
-      break
-    }
-  }
-
-  return { amount, claimant: vaultId, assetCode, assetAddress }
 }
 
-export const SWIFTVAULT_CONTRACT_ID = 'CAVKBSSEP5YOL27DQNHDRIWYFU2HPW3RYJN42EVKATCESTSPLTC67URH'
+export const SWIFTVAULT_CONTRACT_ID = 'CAPN3ZQ2BKYRE65LPVYGGPIOH5R5ZZXAVEE6P7AX4DPJEA67TCI24VYL'
 
 const usdcAsset = new StellarSdk.Asset('USDC', 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5')
 const eurcAsset = new StellarSdk.Asset('EURC', 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO')

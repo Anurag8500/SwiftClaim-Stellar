@@ -126,11 +126,15 @@ export default function VeteranSend({
         address: publicKey,
       })
 
-      await fetch('/api/transfer/submit', {
+      const submitRes = await fetch('/api/transfer/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signedXdr: signedTxXdr }),
       })
+      const submitData = await submitRes.json()
+      if (!submitRes.ok || submitData.error) {
+        throw new Error(submitData.error || `Submit failed with status ${submitRes.status}`)
+      }
 
       setSuccess(true)
     } catch (err) {

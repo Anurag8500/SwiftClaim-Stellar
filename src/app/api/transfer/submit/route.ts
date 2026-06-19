@@ -22,9 +22,9 @@ export async function POST(request: Request) {
       StellarSdk.Networks.TESTNET
     ) as StellarSdk.Transaction
 
-    const feeBumpTx = (StellarSdk.TransactionBuilder as any).buildFeeBumpTransaction(
-      treasuryPublicKey,
-      StellarSdk.BASE_FEE,
+    const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
+      treasuryKeypair.publicKey(),
+      (Number(innerTx.fee) + 10000).toString(),
       innerTx,
       StellarSdk.Networks.TESTNET
     )

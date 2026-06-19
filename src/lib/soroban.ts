@@ -1,9 +1,12 @@
 import * as StellarSdk from '@stellar/stellar-sdk'
 
+/**
+ * Formats a single OracleAttestation payload into an XDR ScVal (ScvMap).
+ * Fields MUST be in lexicographic order to match the Soroban #[contracttype] struct.
+ */
 export function formatAttestationToXDR(payload: any): StellarSdk.xdr.ScVal {
   const entries: StellarSdk.xdr.ScMapEntry[] = []
 
-  // MUST BE SORTED LEXICOGRAPHICALLY!
   // 1. asset_code
   entries.push(
     new StellarSdk.xdr.ScMapEntry({
@@ -37,4 +40,14 @@ export function formatAttestationToXDR(payload: any): StellarSdk.xdr.ScVal {
   )
 
   return StellarSdk.xdr.ScVal.scvMap(entries)
+}
+
+/**
+ * Formats an array of OracleAttestation payloads into a Soroban Vec<OracleAttestation> ScVal.
+ * Used for the updated claim() function which accepts Vec<OracleAttestation>.
+ */
+export function formatAttestationsVecToXDR(attestationPayloads: any[]): StellarSdk.xdr.ScVal {
+  return StellarSdk.xdr.ScVal.scvVec(
+    attestationPayloads.map(p => formatAttestationToXDR(p))
+  )
 }
